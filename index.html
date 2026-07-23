@@ -72,6 +72,19 @@
     color:var(--muted);font-size:12px;letter-spacing:.12em;text-transform:uppercase;cursor:pointer}
   .wave button.on{color:var(--bg);background:var(--ink);border-color:var(--ink);font-weight:700}
   #scope{width:100%;height:150px;display:block;border-radius:8px;background:var(--inset);border:1px solid #0c0b09}
+  .slots{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}
+  .slots button{position:relative;padding:11px 4px 9px;border-radius:9px;border:1px solid var(--line);
+    background:var(--inset);color:var(--muted);cursor:pointer;overflow:hidden;
+    display:flex;flex-direction:column;align-items:center;gap:3px;min-height:52px;justify-content:center}
+  .slots .snum{font-size:9px;letter-spacing:.14em;font-family:ui-monospace,monospace;opacity:.6}
+  .slots .sname{font-size:11px;line-height:1.2;max-width:100%;overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap}
+  .slots button.full{color:var(--ink);border-color:#3a3f47}
+  .slots button.full .sname{font-weight:600}
+  .slots button.sel{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+  .slots button.sel .snum{color:var(--accent);opacity:1}
+  .bankmsg{font-size:10px;color:var(--muted);line-height:1.6;margin-top:10px;min-height:14px}
+  .bankmsg.warn{color:var(--amber)}
   .mixer{display:grid;grid-template-columns:auto 1fr auto;gap:16px 12px;align-items:center}
   .mixer .mlbl{font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink);
     font-family:ui-monospace,monospace;min-width:42px}
@@ -236,6 +249,21 @@
 </div>
 
 <div class="panel">
+  <div class="panel-head">
+    <div class="panel-title">Bank</div>
+    <div class="pbtns">
+      <button id="slotSave">Save</button>
+      <button id="slotDel">Del</button>
+      <button id="bankExp">Export</button>
+      <button id="bankImp">Import</button>
+    </div>
+  </div>
+  <div class="slots" id="slots"></div>
+  <div class="bankmsg" id="bankMsg"></div>
+  <input type="file" id="bankFile" accept="application/json,.json" style="display:none">
+</div>
+
+<div class="panel">
   <div class="panel-title">Mixer</div>
   <div class="mixer" id="mixer"></div>
 </div>
@@ -246,7 +274,7 @@
   จากนั้นกด <b>PITCH</b> ใส่โน้ต accent slide เฉพาะช่อง ● (ช่อง ○ ไม่มีพิตช์ของตัวเอง เหมือนเครื่องจริง) ·
   <b>กลอง</b>: แตะครั้งเดียว วนเป็น ปิด → เปิด → เปิด+accent · <b>CH ตัด OH อัตโนมัติ</b> (choke แบบ 808) ·
   <b>Accent</b> = ดัง+filter วืด · <b>Slide</b> = โน้ตผูก portamento ·
-  <b>Copy Link</b> = เซฟ/แชร์ pattern + knob ทั้งหมดเป็นลิงก์ ·
+  <b>Copy Link</b> = แชร์สถานะปัจจุบันเป็นลิงก์ · <b>Bank</b> = 8 ช่องเก็บ pattern ในเครื่อง (แตะช่อง = โหลด, Save = เก็บทับ, แตะซ้ำภายใน 5 วิ = undo) · <b>Export ไฟล์ JSON ไว้เป็นระยะ</b> เพราะ bank หายถ้าล้างข้อมูลเว็บ ·
   Scope: เส้นบน = waveform, เส้นล่าง = spectrum (ดู resonance peak วิ่งตาม envelope ได้เลย)
 </div>
 
@@ -265,7 +293,16 @@
 
 /* All "magic numbers" that shape the 303 character live here.
    Tweak by ear — one place, every path. */
+/* -72 dB. Below this a voice is inaudible, so it stops computing entirely.
+   Measured before this existed: 8.3% CPU burned with the sequencer STOPPED and
+   nothing making a sound — five drum voices grinding through oscillators and
+   filters for silence. */
+const SILENT = 0.00025;
+
 const TUNING = {
+  busGain:      0.42,    // drum+303 bus headroom before the master soft-clip
+                         // (0.42 was over-cautious; 0.50 is +1.3dB louder and the
+                         //  clipper still only touches ~0.2% of samples = peaks only)
   /* envelopes (seconds) */
   ampAttackS:   0.002,   // VCA attack
   ampReleaseS:  0.008,   // VCA release
@@ -300,13 +337,27 @@ const TUNING = {
   bd:{ baseHz:48, pitchHz:120, pitchDecayS:0.05,  // pitch env: ~168Hz dive -> 48Hz
        decayS:0.30, clickS:0.002, click:0.6,      // noise click transient
        sat:2.0, level:1.0, accBoost:0.5 },
-  sd:{ f1:182, detune:1.824,                      // f2 = f1 * detune (182 -> 332)
-       bodyRatio:0.55,                            // body decay = noise decay * this
-       noiseRatio:9.0, noiseQ:1.4, decayDef:0.18, snappyDef:0.62, snappyGain:1.3,
-       level:1.25, accBoost:0.5 },
-  cp:{ bpHz:1050, bpQ:2.0,                        // bandpass "room"
+  sd:{ f1Def:190, mode2:1.52,          // two resonant modes (2nd quieter, at 1.52x)
+       pitchDropS:0.013, pDropAmt:0.55, tomDropXtra:0.7,  // faster/deeper drop = more thwack
+       bodyDecMin:0.026, bodyDecRange:0.10, tomTailXtra:0.9,    // body dies FAST (tail must be wires, not a tone)
+       wireDecMin:0.035, wireDecRange:0.36, wDecLo:0.7, wDecHi:1.15,  // wire/noise tail
+       satMin:1.35, satMax:2.6,          // body grit, kept gentle: hard sat compresses the
+                                         // attack and lifts the ring = hollow
+       bodyFull:1.0, bodySnare:0.62,     // body level: full tom -> thinned snare
+       tomSplit:0.26, snareCurve:0.62,    // tom zone width · how fast snare character arrives
+       noiseHpLo:420, noiseHpHi:900,      // HP corner — LOW, so noise bridges the mid
+       noiseLpLo:5200, noiseLpHi:9000,    // LP roof — wide band, no resonant peak
+       noiseMax:2.10, transMax:0.62, transS:0.004,
+       noiseCurve:0.55, transCurve:0.6, bodyCurve:0.5,  // sub-1 = rises fast off the tom edge
+       c0:0.71625, c1:4.09373, c2:-8.36873, c3:4.32310,  // level comp, fitted across full throw
+       outDrive:0.62, outMakeup:1.42,    // peak control only; heavier drive lifts the tail = hollow
+       level:2.28, accBoost:0.5 },
+  cp:{ bpHz:780, bpQ:1.8,                         // bandpass centre (lower = darker)
+       lpHz:1700, lpRatio:1.5,                     // lowpass roof kills the "tss" splash
+       bursts:4, burstTaper:0.86,                 // 4 slaps, each a touch softer
        burstGapS:0.010, burstDecayS:0.006, tailDecayS:0.15,
-       level:1.75, accBoost:0.5 },
+       outDrive:0.85, outMakeup:1.45,    // output saturation (clap has the sharpest peak)
+       level:9.5, accBoost:0.5 },
   hh:{ baseHz:40, ratios:[2,3,4.16,5.43,6.79,8.21], // 6 inharmonic squares
        bpHz:3200, bpQ:1.1, hpHz:7000,
        chDecayS:0.05, ohDecayS:0.45, chokeS:0.002,  // CH kills OH within ~5ms
@@ -334,14 +385,16 @@ class DrumKick{
     this.ampCoef=Math.exp(-1/(T.decayS*sr));
     this.pCoef=Math.exp(-1/(T.pitchDecayS*sr));
     this.clickN=Math.max(1,(T.clickS*sr)|0); this.clickLeft=0;
+    this.active=false;
   }
   nz(){ let x=this.ns; x^=x<<13; x^=x>>>17; x^=x<<5; this.ns=x|0; return ((x>>>9)&1048575)/524288-1; }
   trigger(acc){ this.amp=1; this.penv=1; this.phase=0; this.clickLeft=this.clickN;
-    this.accAmp=acc?1+TUNING.bd.accBoost:1; }
+    this.accAmp=acc?1+TUNING.bd.accBoost:1; this.active=true; }
   process(){ const T=TUNING.bd;
     const f=T.baseHz+T.pitchHz*this.penv;
     this.phase+=f/this.sr; if(this.phase>=1)this.phase-=1;
     this.penv*=this.pCoef; this.amp*=this.ampCoef;
+    if(this.amp<SILENT && this.clickLeft<=0) this.active=false;
     let s=Math.sin(6.283185307179586*this.phase)*this.amp;
     if(this.clickLeft>0){ this.clickLeft--; s+=this.nz()*T.click*(this.clickLeft/this.clickN); }
     return tanh(s*T.sat)*T.level*this.accAmp;
@@ -349,87 +402,188 @@ class DrumKick{
 }
 
 class DrumSnare{
-  /* body = detuned sine pair + noise through a one-pole HP.
-     Knob values are LATCHED at trigger(): a drum hit is short, so nothing needs
-     to change mid-sound. That means the exp() calls run a few times per second
-     instead of per sample, and no smoothing is needed — a value can't zipper if
-     it never moves while the voice is ringing. (Real hardware behaves the same:
-     turning a knob mid-hit doesn't rewrite the hit already in progress.) */
+  /* 809-style snare: a saturated dual-resonance BODY with noise on top.
+     Two things were wrong before and both are fixed here:
+       1. body was a clean sine pair -> hollow, tom-like. Now: two resonators
+          + a fast pitch drop + tanh saturation, so it reads as a DRUM, and the
+          noise has something solid to sit on instead of standing alone.
+       2. noise ran through a high-Q bandpass that TRACKED pitch -> it rang and
+          sounded like a cymbal/hi-hat. Now the noise band is wider, lower-Q,
+          and only loosely pitched -> it reads as rattle, not ring.
+
+     SNAPPY is bipolar (plan B): a single tom<->snare axis.
+       0.00 .. ~0.33  = tom zone. all body, noise fades to nothing toward the far
+                        left. body gets a touch longer/rounder as it goes tom-ward.
+       ~0.33 .. 1.00  = snare zone. noise + crack come in, body thins to make room.
+     There is no separate BODY knob on purpose: body weight is a baked function of
+     where SNAPPY sits, so one throw of the knob picks a point on the tom-snare
+     line without balancing two controls against each other.
+
+     Everything latches at trigger() (short sound, no mid-hit change, no zipper). */
   constructor(sr){ const T=TUNING.sd;
-    this.sr=sr; this.ph1=0; this.ph2=0; this.bEnv=0; this.nEnv=0; this.lp=0;
+    this.sr=sr; this.ph1=0; this.ph2=0; this.bEnv=0; this.nEnv=0;
+    this.pDrop=0; this.pdCoef=Math.exp(-1/(T.pitchDropS*sr));
     this.accAmp=1; this.ns=0x51ed|0;
-    this.d1=T.f1/sr; this.d2=T.f1*T.detune/sr;
-    this.nCoef=Math.exp(-1/(T.decayDef*sr));
-    this.bCoef=Math.exp(-1/(T.decayDef*T.bodyRatio*sr));
-    this.nlp=0; this.nbp=0; this.nq=1/T.noiseQ;
-    this.nf=2*Math.sin(Math.PI*T.f1*T.noiseRatio/sr);
-    this.bodyG=1-T.snappyDef; this.noiseG=T.snappyDef*T.snappyGain;
+    this.f1=T.f1Def; this.f2=T.f1Def*T.mode2;
+    this.bCoef=Math.exp(-1/(T.bodyDecDef*sr));
+    this.nCoef=Math.exp(-1/(T.wireDecDef*sr));
+    /* noise bandpass (Chamberlin SVF) + a one-pole HP to keep it from getting
+       boomy. Wider band + lower Q than before = rattle rather than tone. */
+    this.nlp=0; this.nhp1=0;
+    this.nhpK=1-Math.exp(-6.283185307179586*T.noiseHpLo/sr);
+    this.nlpK=1-Math.exp(-6.283185307179586*T.noiseLpLo/sr);
+    this.tEnv=0; this.tCoef=Math.exp(-1/(T.transS*sr));
+    this.bodyG=1; this.noiseG=0; this.transG=0; this.comp=1; this.sat=T.satMin; this.satNorm=1;
+    this.active=false;
   }
   nz(){ let x=this.ns; x^=x<<13; x^=x>>>17; x^=x<<5; this.ns=x|0; return ((x>>>9)&1048575)/524288-1; }
-  /* pitch = fundamental Hz · decayS = noise tail · snappy = body..noise balance */
+  /* pitch = body fundamental Hz · decayS = tail length · snappy = tom<->snare */
   trigger(acc,pitch,decayS,snappy){ const T=TUNING.sd, sr=this.sr;
-    this.d1=pitch/sr; this.d2=pitch*T.detune/sr;
-    /* Pitch drags the noise band along with the body. Measured: with a gentle
-       one-pole highpass the knob moved the timbre by 1.5 semitones and was
-       inaudible above ~20% Snappy — broadband noise simply swamps two sines.
-       A resonant bandpass moves the whole voice together (~7 semitones). */
-    this.nf=2*Math.sin(Math.PI*Math.min(pitch*T.noiseRatio,sr*0.45)/sr);
-    this.nCoef=Math.exp(-1/(decayS*sr));
-    this.bCoef=Math.exp(-1/(decayS*T.bodyRatio*sr));   // body tracks the tail
-    this.bodyG=1-snappy; this.noiseG=snappy*T.snappyGain;
-    this.bEnv=1; this.nEnv=1; this.ph1=0; this.ph2=0;
+    /* remap the bipolar knob to a 0..1 "snareness" with a dead-ish tom third.
+       x<0 = how far into tom territory, x>0 = how far into snare territory. */
+    const split=T.tomSplit;                        // fraction of travel that is tom
+    let snare, tom;
+    if(snappy<=split){ tom=1-snappy/split; snare=0; }     // left zone: pure tom -> edge
+    else { tom=0; snare=(snappy-split)/(1-split); }        // right: 0 -> full snare
+    /* Curve, not smoothstep. Smoothstep is slow at BOTH ends, which squeezed the
+       early snare zone: at the old default the knob was only ~25% into snare
+       character and the body tone dominated — measured as a 17 dB resonant peak
+       over the noise floor, which is what "hollow" sounds like. A power curve
+       brings the snare in quickly and leaves fine control up top, where the
+       useful range actually is. */
+    const ss=Math.pow(snare,T.snareCurve);
+
+    /* --- body --- */
+    this.f1=pitch; this.f2=pitch*T.mode2;
+    this.d1=this.f1/sr; this.d2=this.f2/sr;
+    /* pitch drop: start a bit sharp, fall to pitch. gives the "tok" impact
+       without turning into a laser. tom side gets a touch more drop for weight. */
+    this.pDrop=T.pDropAmt*(1+tom*T.tomDropXtra);
+    /* body decay: DECAY sets it; tom side rounds out a little longer */
+    const bDec=(T.bodyDecMin+T.bodyDecRange*Math.pow(decayS,1.6))*(1+tom*T.tomTailXtra);
+    this.bCoef=Math.exp(-1/(bDec*sr));
+    /* saturation: more toward tom (chesty, 909-ish grit) and always a floor so
+       the body is a drum, not a clean tone. This is what stops "hollow". */
+    this.sat=T.satMin+(T.satMax-T.satMin)*(0.5*ss+tom);
+    /* body level: full on tom side, thins on the snare side to make room */
+    this.bodyG=T.bodyFull-(T.bodyFull-T.bodySnare)*Math.pow(snare,T.bodyCurve);
+
+    /* --- noise / crack --- (silent at full tom) */
+    const wDec=(T.wireDecMin+T.wireDecRange*Math.pow(decayS,1.4))
+               *(T.wDecLo+(T.wDecHi-T.wDecLo)*ss);
+    this.nCoef=Math.exp(-1/(wDec*sr));
+    /* band corners open up as the knob moves toward snare. The HP corner sits
+       LOW on purpose so the noise overlaps the body and bridges the midrange. */
+    const hpF=T.noiseHpLo+(T.noiseHpHi-T.noiseHpLo)*ss;
+    const lpF=T.noiseLpLo+(T.noiseLpHi-T.noiseLpLo)*ss;
+    this.nhpK=1-Math.exp(-6.283185307179586*Math.min(hpF,sr*0.45)/sr);
+    this.nlpK=1-Math.exp(-6.283185307179586*Math.min(lpF,sr*0.45)/sr);
+    /* Noise rises FAST once you leave the tom zone. A smoothstep here was the
+       bug behind "hollow": at the middle of the knob it left body at 0.90 and
+       noise at 0.27, i.e. still a tom. A sub-1 power means stepping off the tom
+       boundary immediately gives you real wires.
+       It still reaches exactly 0 inside the tom zone — that silence is what
+       exposes the body as a tom/perc voice, which is a feature. */
+    this.noiseG=Math.pow(snare,T.noiseCurve)*T.noiseMax;
+    this.transG=Math.pow(snare,T.transCurve)*T.transMax;
+
+    /* level compensation across the WHOLE throw (tom end included), cubic fit
+       to measured RMS — see test "snappy level". re-fit if any gain changes. */
+    const u=snappy;
+    this.comp=T.c0+T.c1*u+T.c2*u*u+T.c3*u*u*u;
+
+    this.satNorm=1/tanh(this.sat);                 // keep peak ~constant vs sat amount
+    this.bEnv=1; this.nEnv=1; this.tEnv=1; this.ph1=0; this.ph2=0;
+    this.nlp=0; this.nhp1=0;
     this.accAmp=acc?1+T.accBoost:1;
+    this.active=true;
   }
   process(){ const T=TUNING.sd;
-    this.ph1+=this.d1; if(this.ph1>=1)this.ph1-=1;
-    this.ph2+=this.d2; if(this.ph2>=1)this.ph2-=1;
-    const body=(Math.sin(6.283185307179586*this.ph1)*0.6
-               +Math.sin(6.283185307179586*this.ph2)*0.4)*this.bEnv;
+    /* body: two resonant modes with a decaying pitch drop, then saturated */
+    const fm=1+this.pDrop;              // pDrop starts >0, decays to 0 -> pitch falls
+    this.ph1+=this.d1*fm; if(this.ph1>=1)this.ph1-=1;
+    this.ph2+=this.d2*fm; if(this.ph2>=1)this.ph2-=1;
+    this.pDrop*=this.pdCoef;
+    let body=(Math.sin(6.283185307179586*this.ph1)*0.62
+             +Math.sin(6.283185307179586*this.ph2)*0.38)*this.bEnv;
+    body=tanh(body*this.sat)*this.satNorm;         // saturate -> merge modes into a body
     this.bEnv*=this.bCoef;
-    const n=this.nz();                       // noise -> SVF bandpass, centre tracks Pitch
-    this.nlp+=this.nf*this.nbp;
-    const nhp=n-this.nlp-this.nq*this.nbp;
-    this.nbp+=this.nf*nhp;
-    const noise=this.nbp*this.nEnv; this.nEnv*=this.nCoef;
-    return (body*this.bodyG+noise*this.noiseG)*T.level*this.accAmp;
+
+    /* Noise path: a WIDE band, not a resonant bandpass.
+       A narrow band left 430Hz-1.2k almost empty (measured 2.2% of energy) and
+       that spectral hole is exactly what reads as "hollow" — body at the bottom,
+       rattle up top, nothing bridging them. Two one-pole filters give a broad
+       band that overlaps the body instead of sitting above it. */
+    const n=this.nz();
+    this.nhp1+=this.nhpK*(n-this.nhp1);         // one-pole HP: remove rumble
+    const hp=n-this.nhp1;
+    this.nlp+=this.nlpK*(hp-this.nlp);          // one-pole LP: roof
+    const band=this.nlp;
+    const noise=band*this.nEnv; this.nEnv*=this.nCoef;
+    const trans=hp*this.tEnv; this.tEnv*=this.tCoef;      // crack = the brighter pre-LP signal
+
+    if(this.bEnv<SILENT && this.nEnv<SILENT && this.tEnv<SILENT) this.active=false;
+    /* Output stage. The crack is a very sharp transient — measured crest factor
+       was 13 dB, so balancing this voice by AVERAGE level (to stop it being
+       buried) sent its PEAKS to 2.3. Those peaks slammed the shared master
+       soft-clip, which then ducked the kick and the 303 on every accent:
+       audible as pumping and crunch. Saturating here instead costs ~2 dB of
+       level but halves the peak, and it is what a real drum machine's output
+       stage does anyway. Makeup gain restores the loudness. */
+    const raw=(body*this.bodyG+noise*this.noiseG+trans*this.transG)
+              *this.comp*T.level*this.accAmp;
+    return tanh(raw*T.outDrive)*T.outMakeup;
   }
 }
 
 class DrumClap{
-  /* 3 noise pre-bursts, then a longer tail, all through a bandpass.
-     Same latch-at-trigger rule as the snare.
-     Note burstDecayS is deliberately NOT exposed: stretch the individual bursts
-     and it stops reading as a handclap. Only the tail and the spacing move. */
+  /* 4 noise bursts through a BANDPASS with a lowpass roof, then a room-ish tail.
+     Tuning pass (not a rebuild): the old version was too bright (centroid ~2.7k,
+     real claps sit 1-2k) so it read as a splashy noisy-snare. Fixes:
+       - lower bandpass centre + a one-pole lowpass roof -> darker, "hands" not "tss"
+       - a subtle 4th burst -> fuller ragged attack
+       - burst amplitudes taper (each slap a touch softer) -> more natural
+     Still latch-at-trigger. burstDecayS stays fixed (stretch a burst and it stops
+     being a clap). Only tail length and burst spacing are on knobs. */
   constructor(sr){ const T=TUNING.cp;
-    this.sr=sr; this.env=0; this.age=0; this.burst=3; this.tail=true;
+    this.sr=sr; this.env=0; this.age=0; this.burst=4; this.tail=true;
     this.accAmp=1; this.ns=0x2b19|0;
     this.gapN=Math.max(1,(T.burstGapS*sr)|0);
     this.bCoef=Math.exp(-1/(T.burstDecayS*sr));
     this.tCoef=Math.exp(-1/(T.tailDecayS*sr));
-    this.lp=0; this.bp=0;
+    this.lp=0; this.bp=0; this.roof=0;
     this.f1=2*Math.sin(Math.PI*T.bpHz/sr); this.q1=1/T.bpQ;  // Chamberlin SVF
+    this.roofK=1-Math.exp(-6.283185307179586*T.lpHz/sr);     // lowpass roof
+    this.bAmp=1;
+    this.active=false;
   }
   nz(){ let x=this.ns; x^=x<<13; x^=x>>>17; x^=x<<5; this.ns=x|0; return ((x>>>9)&1048575)/524288-1; }
   /* pitch = bandpass centre · decayS = tail length · spreadS = gap between bursts */
   trigger(acc,pitch,decayS,spreadS){ const T=TUNING.cp, sr=this.sr;
     this.f1=2*Math.sin(Math.PI*Math.min(pitch,sr*0.45)/sr);
+    this.roofK=1-Math.exp(-6.283185307179586*Math.min(pitch*T.lpRatio,sr*0.45)/sr);
     this.tCoef=Math.exp(-1/(decayS*sr));
     this.gapN=Math.max(1,(spreadS*sr)|0);
-    this.env=1; this.age=0; this.burst=0; this.tail=false;
-    this.accAmp=acc?1+T.accBoost:1;
+    this.env=1; this.age=0; this.burst=0; this.tail=false; this.bAmp=1;
+    this.accAmp=acc?1+T.accBoost:1; this.active=true;
   }
   process(){ const T=TUNING.cp;
     this.age++;
-    if(!this.tail && this.burst<3 && this.age>=this.gapN*(this.burst+1)){
-      this.burst++; this.env=1;
-      if(this.burst===3) this.tail=true;   // last hit rings out through the tail
+    if(!this.tail && this.burst<T.bursts && this.age>=this.gapN*(this.burst+1)){
+      this.burst++; this.bAmp*=T.burstTaper;        // each slap a little softer
+      this.env=this.bAmp;
+      if(this.burst===T.bursts) this.tail=true;      // last one rings into the tail
     }
     this.env*=this.tail?this.tCoef:this.bCoef;
+    if(this.tail && this.env<SILENT) this.active=false;
     const x=this.nz()*this.env;
     this.lp+=this.f1*this.bp;
     const hp=x-this.lp-this.q1*this.bp;
     this.bp+=this.f1*hp;
-    return this.bp*T.level*this.accAmp;
+    this.roof+=this.roofK*(this.bp-this.roof);        // lowpass roof -> darker
+    /* same output stage as the snare — the clap's crest factor was 16 dB,
+       the worst in the kit, so its peaks were the biggest master-clip offender */
+    return tanh(this.roof*T.level*this.accAmp*T.outDrive)*T.outMakeup;
   }
 }
 
@@ -448,8 +602,10 @@ class DrumHat{
     this.d4=T.baseHz*T.ratios[4]/sr; this.d5=T.baseHz*T.ratios[5]/sr;
     this.lp=0; this.bp=0; this.f1=2*Math.sin(Math.PI*T.bpHz/sr); this.q1=1/T.bpQ;
     this.hlp=0; this.hpK=1-Math.exp(-6.283185307179586*T.hpHz/sr);
+    this.active=false;
   }
-  trigger(acc){ this.env=1; this.releasing=false; this.accAmp=acc?1+TUNING.hh.accBoost:1; }
+  trigger(acc){ this.env=1; this.releasing=false; this.accAmp=acc?1+TUNING.hh.accBoost:1;
+    this.active=true; }
   choke(){ this.releasing=true; }
   process(){ const T=TUNING.hh;
     this.p0+=this.d0; if(this.p0>=1)this.p0-=1;
@@ -467,6 +623,7 @@ class DrumHat{
     this.hlp+=this.hpK*(this.bp-this.hlp);    // one-pole HP on top
     const y=this.bp-this.hlp;
     this.env*=this.releasing?this.chokeCoef:this.coef;
+    if(this.env<SILENT) this.active=false;
     return y*this.env*T.level*this.accAmp;
   }
 }
@@ -476,9 +633,9 @@ class Engine {
     this.sr=sr;
     this.p={wave:0,tune:0,cutoff:600,reso:0.7,envMod:0.55,decay:0.4,accent:0.5,drive:0.35,tempo:130,
       /* mixer — per-voice level + master, all 0..1 */
-      v303:0.55,vBD:0.65,vSD:0.42,vCH:0.32,vOH:0.32,vCP:0.40,vMas:0.90,
+      v303:0.55,vBD:0.65,vSD:0.72,vCH:0.32,vOH:0.32,vCP:0.60,vMas:0.90,
       /* drum voice controls (latched at trigger, see the voice classes) */
-      sdPitch:182, sdDecay:0.18, sdSnappy:0.62,
+      sdPitch:190, sdDecay:0.30, sdSnappy:0.70,
       cpPitch:1050, cpDecay:0.15, cpSpread:0.010};
     /* Step time data follows the Roland sheet's bottom row exactly:
        t = 1 note (●) · 2 tie/sustain (○) · 0 rest (—)
@@ -647,12 +804,24 @@ class Engine {
       /* every voice hits its own fader BEFORE the sum — that's the whole point:
          with sane levels the master tanh below only engages on real peaks,
          instead of squashing the whole mix on every kick. */
-      const dsum=this.bd.process()*this.mvBD
-                +this.sd.process()*this.mvSD
-                +this.cp.process()*this.mvCP
-                +this.chh.process()*this.mvCH
-                +this.ohh.process()*this.mvOH;
-      out[k]=tanh(s303+dsum)*this.mvMas;
+      /* only voices that are actually making sound get computed */
+      let dsum=0;
+      if(this.bd.active)  dsum+=this.bd.process()*this.mvBD;
+      if(this.sd.active)  dsum+=this.sd.process()*this.mvSD;
+      if(this.cp.active)  dsum+=this.cp.process()*this.mvCP;
+      if(this.chh.active) dsum+=this.chh.process()*this.mvCH;
+      if(this.ohh.active) dsum+=this.ohh.process()*this.mvOH;
+      /* Master fader goes INSIDE the clipper. It used to be outside —
+         tanh(sum)*mvMas — which meant turning the master down could not reduce
+         clipping at all, it only made an already-squashed signal quieter. There
+         was no way for the player to fix distortion. Now the master is drive
+         into the clipper, which is how a real desk behaves.
+         busGain is fixed headroom: with every voice normalised to peak ~1 and
+         several landing on the same step, the raw sum reaches ~3, and tanh at
+         that level ducks the whole mix ~9 dB on every drum hit — the 303 pumps
+         under the kick. This scales the bus so peaks only just touch the
+         clipper instead of slamming it. */
+      out[k]=tanh((s303+dsum)*TUNING.busGain*this.mvMas);
     }
   }
 }
@@ -661,6 +830,7 @@ class Engine {
 /* Serialize the exact same core into the worklet — no eval anywhere. */
 const WORKLET_CODE = [
   'const TUNING='+JSON.stringify(TUNING)+';',
+  'const SILENT='+SILENT+';',
   tanh.toString(),
   midiToFreq.toString(),
   polyblep.toString(),
@@ -715,7 +885,7 @@ const state = {
   params:{ tune:0, cutoff:600, reso:0.7, envMod:0.55, decay:0.4, accent:0.5, drive:0.35 },
   sel:0, pattern:defaultPattern(), len:16, pmode:'pitch',
   track:'303', drums:defaultDrums(),
-  mix:{ v303:0.55, vBD:0.65, vSD:0.42, vCH:0.32, vOH:0.32, vCP:0.40, vMas:0.90 }
+  mix:{ v303:0.55, vBD:0.65, vSD:0.72, vCH:0.32, vOH:0.32, vCP:0.60, vMas:0.90 }
 };
 
 let audioCtx=null, analyser=null, ctl=null, started=false, mode='', initPromise=null;
@@ -813,15 +983,15 @@ const KNOBSETS={
   ],
   'BD':[],
   'SD':[
-    {key:'sdPitch', name:'Pitch',  min:110,max:340, def:182, log:true, fmt:v=>Math.round(v)+'Hz'},
-    {key:'sdDecay', name:'Decay',  min:0.04,max:0.6,def:0.18,log:true, fmt:v=>Math.round(v*1000)+'ms'},
-    {key:'sdSnappy',name:'Snappy', min:0,  max:1,   def:0.62,fmt:v=>Math.round(v*100)+'%'},
+    {key:'sdPitch', name:'Pitch',  min:120,max:260, def:190, log:true, fmt:v=>Math.round(v)+'Hz'},
+    {key:'sdDecay', name:'Decay',  min:0,  max:1,  def:0.30, fmt:v=>Math.round(v*100)+'%'},
+    {key:'sdSnappy',name:'Snap',   min:0,  max:1,   def:0.70,fmt:v=>v<0.26?('tom '+Math.round((1-v/0.26)*100)+'%'):('snr '+Math.round((v-0.26)/0.74*100)+'%')},
   ],
   'CH':[], 'OH':[],
   'CP':[
     {key:'cpPitch', name:'Pitch',  min:500,max:2400,def:1050,log:true, fmt:v=>Math.round(v)+'Hz'},
-    {key:'cpDecay', name:'Decay',  min:0.04,max:0.5,def:0.15,log:true, fmt:v=>Math.round(v*1000)+'ms'},
-    {key:'cpSpread',name:'Spread', min:0.004,max:0.028,def:0.010,fmt:v=>(v*1000).toFixed(1)+'ms'},
+    {key:'cpDecay', name:'Decay',  min:0.006,max:0.34,def:0.30,log:true, fmt:v=>Math.round(v*1000)+'ms'},
+    {key:'cpSpread',name:'Spread', min:0.004,max:0.028,def:0.010,pow:3.1,fmt:v=>(v*1000).toFixed(1)+'ms'},
   ],
 };
 const KNOBDEF={};   // key -> cfg, for hash validation across every set
@@ -843,8 +1013,14 @@ function buildKnobs(track){
     const wrap=document.createElement('div'); wrap.className='knob';
     wrap.innerHTML='<div class="dial"><div class="ind"></div></div><div class="name">'+cfg.name+'</div><div class="val"></div>';
     const dial=wrap.querySelector('.dial'), ind=wrap.querySelector('.ind'), val=wrap.querySelector('.val');
-    const toNorm=(v)=> cfg.log ? Math.log(v/cfg.min)/Math.log(cfg.max/cfg.min) : (v-cfg.min)/(cfg.max-cfg.min);
-    const toVal=(nm)=> cfg.log ? cfg.min*Math.pow(cfg.max/cfg.min,nm) : cfg.min+(cfg.max-cfg.min)*nm;
+    /* three mappings: log for frequencies, pow for ranges whose useful zone
+       sits at one end, linear otherwise */
+    const toNorm=(v)=> cfg.log ? Math.log(v/cfg.min)/Math.log(cfg.max/cfg.min)
+                     : cfg.pow ? Math.pow((v-cfg.min)/(cfg.max-cfg.min),1/cfg.pow)
+                     : (v-cfg.min)/(cfg.max-cfg.min);
+    const toVal=(nm)=> cfg.log ? cfg.min*Math.pow(cfg.max/cfg.min,nm)
+                     : cfg.pow ? cfg.min+(cfg.max-cfg.min)*Math.pow(nm,cfg.pow)
+                     : cfg.min+(cfg.max-cfg.min)*nm;
     /* start from live state, not cfg.def — so switching away and back keeps the value */
     let norm=Math.max(0,Math.min(1,toNorm(state.params[cfg.key])));
     const render=(save)=>{
@@ -871,10 +1047,10 @@ function buildKnobs(track){
 const MIX=[
   {key:'v303',name:'303', def:0.55},
   {key:'vBD', name:'BD',  def:0.65},
-  {key:'vSD', name:'SD',  def:0.42},
+  {key:'vSD', name:'SD',  def:0.72},
   {key:'vCH', name:'CH',  def:0.32},
   {key:'vOH', name:'OH',  def:0.32},
-  {key:'vCP', name:'CP',  def:0.40},
+  {key:'vCP', name:'CP',  def:0.60},
   {key:'vMas',name:'Mas', def:0.90, master:true},
 ];
 const mixCtl={};
@@ -899,6 +1075,139 @@ MIX.forEach(cfg=>{
     apply(Math.max(0,Math.min(1,v)),false); }};
   mixerEl.appendChild(lbl); mixerEl.appendChild(inp); mixerEl.appendChild(val);
 });
+
+/* ---------- pattern bank ----------
+   8 slots, like the real machine. A hard limit is a feature: unlimited storage
+   turns into a pile nobody revisits.
+   Every localStorage call is guarded — it throws in private mode, when the quota
+   is full, and in sandboxed frames. The bank degrades to session-only rather
+   than taking the instrument down with it, and Export/Import keep working
+   because they don't touch storage at all. */
+const BANK_KEY='rb303.bank.v1';
+const SLOT_COUNT=8;
+let bank=new Array(SLOT_COUNT).fill(null);
+let slotSel=0, storageOK=true;
+
+const slotsEl=document.getElementById('slots');
+const bankMsgEl=document.getElementById('bankMsg');
+function bankMsg(t,warn){ bankMsgEl.textContent=t||''; bankMsgEl.classList.toggle('warn',!!warn); }
+
+function readBank(){
+  try{
+    const raw=localStorage.getItem(BANK_KEY);
+    if(!raw) return;
+    const b=JSON.parse(raw);
+    if(Array.isArray(b)) for(let i=0;i<SLOT_COUNT;i++){
+      const x=b[i];
+      if(x && typeof x==='object' && x.seq) bank[i]={n:String(x.n||'').slice(0,24),seq:x.seq,snd:x.snd||null};
+    }
+  }catch(e){ storageOK=false; }
+}
+function writeBank(){
+  try{ localStorage.setItem(BANK_KEY,JSON.stringify(bank)); }
+  catch(e){ storageOK=false;
+    bankMsg('เบราว์เซอร์ไม่ยอมให้เก็บข้อมูล — bank จะอยู่แค่จนกว่าจะปิดหน้านี้ ใช้ Export เก็บไฟล์แทน',true); }
+}
+
+/* one undo buffer covering load / save / delete — same 5s gesture as Clr */
+let bankUndo=null, bankUndoT=null;
+function armBankUndo(label,restore){
+  bankUndo=restore; clearTimeout(bankUndoT);
+  bankMsg(label+' · แตะ Undo ใน 5 วินาทีเพื่อย้อนกลับ');
+  bankUndoT=setTimeout(()=>{ bankUndo=null; bankMsg(''); renderSlots(); },5000);
+  renderSlots();
+}
+function runBankUndo(){
+  if(!bankUndo) return;
+  const f=bankUndo; bankUndo=null; clearTimeout(bankUndoT);
+  f(); bankMsg('ย้อนกลับแล้ว'); renderSlots();
+  setTimeout(()=>{ if(!bankUndo) bankMsg(''); },1500);
+}
+
+function renderSlots(){
+  slotsEl.innerHTML='';
+  for(let i=0;i<SLOT_COUNT;i++){
+    const b=document.createElement('button');
+    const full=!!bank[i];
+    b.className=(full?'full ':'')+(i===slotSel?'sel':'');
+    b.innerHTML='<span class="snum">'+(i+1)+'</span><span class="sname">'+
+      (full?escapeHtml(bank[i].n||'—'):'ว่าง')+'</span>';
+    b.onclick=()=>tapSlot(i);
+    slotsEl.appendChild(b);
+  }
+}
+function escapeHtml(s){ return String(s).replace(/[&<>"']/g,c=>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+function tapSlot(i){
+  if(bankUndo){ runBankUndo(); return; }          // second tap anywhere = undo
+  slotSel=i;
+  if(!bank[i]){ renderSlots(); bankMsg('ช่อง '+(i+1)+' ว่าง — กด Save เพื่อเก็บสิ่งที่กำลังทำอยู่'); return; }
+  const before={seq:seqSnapshot(),snd:sndSnapshot()};
+  applySnd(bank[i].snd);
+  applySeq(bank[i].seq,false);
+  refreshSteps(); refreshEditor(); saveHash();
+  armBankUndo('โหลด "'+(bank[i].n||('ช่อง '+(i+1)))+'" แล้ว',()=>{
+    applySnd(before.snd); applySeq(before.seq,false);
+    refreshSteps(); refreshEditor(); saveHash();
+  });
+}
+
+document.getElementById('slotSave').onclick=()=>{
+  const cur=bank[slotSel];
+  const name=window.prompt('ตั้งชื่อ pattern ช่อง '+(slotSel+1)+':', cur?cur.n:'Pattern '+(slotSel+1));
+  if(name===null) return;
+  const before=cur?JSON.parse(JSON.stringify(cur)):null;
+  bank[slotSel]={ n:String(name).slice(0,24), seq:seqSnapshot(), snd:sndSnapshot() };
+  writeBank();
+  armBankUndo('เก็บลงช่อง '+(slotSel+1)+' แล้ว',()=>{ bank[slotSel]=before; writeBank(); });
+};
+document.getElementById('slotDel').onclick=()=>{
+  if(!bank[slotSel]){ bankMsg('ช่อง '+(slotSel+1)+' ว่างอยู่แล้ว'); return; }
+  const before=JSON.parse(JSON.stringify(bank[slotSel]));
+  bank[slotSel]=null; writeBank();
+  armBankUndo('ลบช่อง '+(slotSel+1)+' แล้ว',()=>{ bank[slotSel]=before; writeBank(); });
+};
+
+/* Export is the real backup — localStorage is tied to this browser on this
+   device and vanishes if site data is cleared. */
+document.getElementById('bankExp').onclick=()=>{
+  const payload={ app:'rb303', kind:'bank', v:1, saved:new Date().toISOString(), slots:bank };
+  try{
+    const blob=new Blob([JSON.stringify(payload,null,1)],{type:'application/json'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url; a.download='rb303-bank.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+    bankMsg('ดาวน์โหลด rb303-bank.json แล้ว');
+  }catch(e){ bankMsg('ดาวน์โหลดไม่สำเร็จในเบราว์เซอร์นี้',true); }
+};
+const bankFileEl=document.getElementById('bankFile');
+document.getElementById('bankImp').onclick=()=>bankFileEl.click();
+bankFileEl.onchange=()=>{
+  const f=bankFileEl.files&&bankFileEl.files[0];
+  if(!f) return;
+  const r=new FileReader();
+  r.onload=()=>{
+    try{
+      const d=JSON.parse(r.result);
+      const slots=Array.isArray(d)?d:d.slots;
+      if(!Array.isArray(slots)) throw 0;
+      const before=JSON.parse(JSON.stringify(bank));
+      let n=0;
+      for(let i=0;i<SLOT_COUNT;i++){
+        const x=slots[i];
+        if(x && typeof x==='object' && x.seq){ bank[i]={n:String(x.n||'').slice(0,24),seq:x.seq,snd:x.snd||null}; n++; }
+        else bank[i]=null;
+      }
+      writeBank();
+      armBankUndo('นำเข้า '+n+' pattern แล้ว',()=>{ bank=before; writeBank(); });
+    }catch(e){ bankMsg('ไฟล์ไม่ถูกต้อง — ต้องเป็นไฟล์ที่ Export จากแอปนี้',true); }
+    bankFileEl.value='';
+  };
+  r.readAsText(f);
+};
 
 /* ---------- waveform ---------- */
 function setWave(w,save){
@@ -1157,13 +1466,67 @@ function drawScope(){
   sc.fillText('SPECTRUM 40Hz–12k (log)',4*d,specTop+11*d);
 }
 
-/* ---------- save / share via URL hash ---------- */
-function snapshot(){
+/* ---------- state serialisation ----------
+   Split into two halves on purpose, even though everything currently loads
+   together. `seq` is the performance, `snd` is the sound.
+   Song mode will want to step through `seq` while `snd` stays put — otherwise
+   the cutoff and levels jump every time a section changes and it stops sounding
+   like one track. Automation will hang off `seq` for the same reason: knob moves
+   in time are part of the performance, not part of the patch.
+   Getting the shape right now costs nothing; retrofitting it later would mean
+   migrating every pattern already saved in the bank. */
+function seqSnapshot(){
   /* drums encode to a 16-char string per track: 0=off 1=on 2=on+accent */
   const d={};
-  DRUM_TRACKS.forEach(t=>{ d[t]=state.drums[t].map(s=>s.on?(s.accent?2:1):0).join(''); });
-  return { v:4, t:state.tempo, w:state.wave, k:state.params, l:state.len,
-           s:state.pattern.map(x=>[x.note,x.t,x.accent,x.slide]), d, m:state.mix };
+  DRUM_TRACKS.forEach(t=>{ d[t]=state.drums[t].map(x=>x.on?(x.accent?2:1):0).join(''); });
+  return { s:state.pattern.map(x=>[x.note,x.t,x.accent,x.slide]), d, l:state.len };
+}
+function sndSnapshot(){
+  return { w:state.wave, t:state.tempo,
+           k:Object.assign({},state.params), m:Object.assign({},state.mix) };
+}
+function applySeq(q,legacy){
+  if(!q) return;
+  if(Array.isArray(q.s)&&q.s.length===16){
+    /* v<=3 stored a plain on/off flag in slot 1; it maps straight onto
+       note(1)/rest(0). Old links keep working, they just have no ties. */
+    state.pattern=q.s.map(a=>{
+      let t=+a[1]|0;
+      if(legacy) t=a[1]?1:0;
+      if(t<0||t>2) t=0;
+      return { note:Math.max(0,Math.min(127,(+a[0]|0)||36)),
+               t, accent:a[2]?1:0, slide:a[3]?1:0 };
+    });
+  }
+  if(typeof q.l==='number') setLen(q.l|0,false);
+  /* a saved state is FULL state — v1 links (no drums) mean silent drums */
+  state.drums=emptyDrums();
+  if(q.d) DRUM_TRACKS.forEach(t=>{
+    const str=q.d[t];
+    if(typeof str==='string'&&str.length===16){
+      state.drums[t]=str.split('').map(c=>({on:c!=='0'?1:0,accent:c==='2'?1:0}));
+    }
+  });
+  if(ctl){ ctl.setPattern(state.pattern); ctl.setDrums(state.drums); }
+}
+function applySnd(n){
+  if(!n) return;
+  if(typeof n.t==='number'){ state.tempo=Math.max(60,Math.min(180,n.t|0));
+    tempoEl.value=state.tempo; bpmVal.textContent=state.tempo;
+    if(ctl) ctl.setParam('tempo',state.tempo); }
+  if(n.w===0||n.w===1) setWave(n.w,false);
+  if(n.k) for(const key in n.k){
+    const c=KNOBDEF[key]; const v=+n.k[key];
+    if(c && isFinite(v)) state.params[key]=Math.max(c.min,Math.min(c.max,v));
+  }
+  if(booted) buildKnobs(state.track);          // re-render dials from new values
+  if(n.m) for(const key in n.m){ if(mixCtl[key]) mixCtl[key].set(+n.m[key]); }
+}
+
+/* ---------- save / share via URL hash ---------- */
+function snapshot(){
+  const q=seqSnapshot(), n=sndSnapshot();
+  return { v:4, t:n.t, w:n.w, k:n.k, l:q.l, s:q.s, d:q.d, m:n.m };
 }
 function encodeState(){ return 'p='+btoa(JSON.stringify(snapshot())); }
 function writeHash(){ try{ history.replaceState(null,'','#'+encodeState()); }catch(e){} }
@@ -1173,35 +1536,8 @@ function loadHash(){
   if(!h || h.indexOf('#p=')!==0) return;
   try{
     const d=JSON.parse(atob(h.slice(3)));
-    if(typeof d.t==='number'){ state.tempo=Math.max(60,Math.min(180,d.t|0));
-      tempoEl.value=state.tempo; bpmVal.textContent=state.tempo; }
-    if(d.w===0||d.w===1) setWave(d.w,false);
-    if(d.k) for(const key in d.k){
-      const c=KNOBDEF[key]; const v=+d.k[key];
-      if(c && isFinite(v)) state.params[key]=Math.max(c.min,Math.min(c.max,v));
-    }
-    if(Array.isArray(d.s)&&d.s.length===16){
-      /* v<=3 stored a plain on/off flag in slot 1; it maps straight onto
-         note(1)/rest(0). Old links keep working, they just have no ties. */
-      const old=!(d.v>=4);
-      state.pattern=d.s.map(a=>{
-        let t=+a[1]|0;
-        if(old) t=a[1]?1:0;
-        if(t<0||t>2) t=0;
-        return { note:Math.max(0,Math.min(127,(+a[0]|0)||36)),
-                 t, accent:a[2]?1:0, slide:a[3]?1:0 };
-      });
-    }
-    if(typeof d.l==='number') setLen(d.l|0,false);
-    /* a link is the FULL state — v1 links (no drums saved) mean silent drums */
-    state.drums=emptyDrums();
-    if(d.d) DRUM_TRACKS.forEach(t=>{
-      const str=d.d[t];
-      if(typeof str==='string'&&str.length===16){
-        state.drums[t]=str.split('').map(c=>({on:c!=='0'?1:0,accent:c==='2'?1:0}));
-      }
-    });
-    if(d.m) for(const key in d.m){ if(mixCtl[key]) mixCtl[key].set(+d.m[key]); }
+    applySnd({ t:d.t, w:d.w, k:d.k, m:d.m });
+    applySeq({ s:d.s, d:d.d, l:d.l }, !(d.v>=4));
   }catch(e){ /* bad/old link -> keep defaults */ }
 }
 document.getElementById('copyLink').onclick=async function(){
@@ -1261,6 +1597,8 @@ document.getElementById('resetPat').onclick=()=>{
 loadHash();          // fills state.params; knobs render from it below
 buildKnobs(state.track);
 buildSteps();
+readBank(); renderSlots();
+if(!storageOK) bankMsg('เบราว์เซอร์นี้ไม่ให้เก็บข้อมูลถาวร — bank อยู่แค่จนปิดหน้า ใช้ Export เก็บไฟล์แทน',true);
 setLen(state.len,false);
 refreshEditor();
 sizeScope();
