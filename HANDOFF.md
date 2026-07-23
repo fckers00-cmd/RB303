@@ -46,7 +46,9 @@ Target: **"acid box จอเดียว"** = 303 หนึ่งตัว + �
 - Scope: waveform + spectrum log 40Hz–12kHz
 
 ### Save/Share
-URL hash `#p=` + base64(JSON) อัตโนมัติ (debounce 250ms, `history.replaceState`)
+- **URL hash** `#p=` + base64(JSON) อัตโนมัติ (debounce 250ms, `history.replaceState`) — สำหรับแชร์ทีละ pattern
+- **Bank 8 ช่อง** ใน localStorage · ตั้งชื่อได้ · Save/Del/Export/Import · undo 5 วินาทีทุกการกระทำ
+  (จำกัด 8 ช่องโดยเจตนา — เก็บได้ไม่จำกัดจะกลายเป็นกองที่ไม่มีใครกลับไปเปิด)
 
 ---
 
@@ -55,6 +57,11 @@ URL hash `#p=` + base64(JSON) อัตโนมัติ (debounce 250ms, `hist
 - DSP core อยู่ระหว่าง `/* ==== DSP CORE BEGIN ==== */` … `/* ==== DSP CORE END ==== */` — เทสต์ extract ส่วนนี้ไปรันใน Node
 - `WORKLET_CODE` ประกอบจาก `JSON.stringify(TUNING)` + `tanh/midiToFreq/polyblep/DrumKick/DrumSnare/DrumClap/DrumHat/Engine` (`.toString()`) + Voice303 wrapper
   → **เพิ่มคลาส/ฟังก์ชันใหม่ใน core ต้องเพิ่มเข้า list นี้ด้วย ไม่งั้น worklet พังแต่ fallback ยังทำงาน = บั๊กหายาก**
+- **`seq` / `snd` split** — state ถูกแยกเป็นสองกล่องตั้งแต่ระดับ serialisation:
+  `seqSnapshot()/applySeq()` = การเล่น (pattern 303, กลอง, length) · `sndSnapshot()/applySnd()` = เสียง (wave, knob, mixer, tempo)
+  ตอนนี้โหลดพร้อมกันเสมอ ใช้งานไม่ต่างจากรวมเป็นก้อนเดียว **แต่ song mode จะไล่เฉพาะ `seq` โดยล็อก `snd` ไว้**
+  ไม่งั้นเปลี่ยนท่อนทีเสียงกระโดดทั้งชุด · **automation จะไปเกาะ `seq`** เพราะการหมุนปุ่มตามจังหวะเป็นส่วนหนึ่งของการเล่น
+  ⚠️ `bank_test.js` มีเทสต์คุมไม่ให้สองกล่องนี้รั่วใส่กัน — ถ้าพังคือ song mode ทำไม่ได้
 - **ctl interface** (จุดต่อ UI ↔ engine ทั้งสองโหมด):
   `setParam(k,v) / setPattern(p) / setStep(i,d) / setDrums(d) / setDrumStep(t,i,d) / previewDrum(t) / preview(note) / play() / stop()`
 - เส้นเสียง: Engine → **AnalyserNode** → destination · voice ใหม่ต้อง sum เข้าจุดเดียวกันนี้
@@ -119,6 +126,82 @@ URL hash `#p=` + base64(JSON) อัตโนมัติ (debounce 250ms, `hist
 Engine มองข้างหน้า 1 step: ถ้า step ถัดไปเป็น tie **หรือ** step นี้มี slide → ถือ gate ข้ามเส้นแบ่ง (`gateLeft = -1`)
 tie หลัง rest = เงียบต่อ (ไม่มีอะไรให้ลาก) — ได้มาฟรีจากการเช็ค `if(this.gate)`
 
+### Snare — รอบแก้ "กลวง" (รอบสอง) + bug ระดับมิกซ์
+ผู้ใช้รายงาน "กลวงอีกแล้ว" หลังรอบ 809 · วัดแล้วเจอ **3 สาเหตุซ้อนกัน**:
+
+1. **default Snap อยู่ผิดที่** — ที่ 0.55 ค่า body=0.90 / noise=0.27 (7:1) = ยังเป็น tom
+   ต้นเหตุ: ใช้ `smoothstep` กับแกน snare → ครึ่งแรกของโซน snare แทบไม่มี noise
+   **แก้: ใช้ power < 1** (`noiseCurve:0.55`) → พ้นขอบ tom แล้วได้ wire ทันที · ย้าย default → 0.70
+2. **body ring เป็นโทนบริสุทธิ์** — 76% ของพลังงานหางอยู่ที่ fundamental · body decay 86ms ใกล้ noise 102ms → หางเป็น "โทน" ไม่ใช่ "wire"
+   **แก้: body ตายเร็วกว่า noise มาก** (bodyDecMin 45→26ms) → หางกลายเป็น noise
+3. **saturation บูสต์หาง** — `tanh(x·s)/tanh(s)` ทำให้ peak คงที่แต่ส่วนเบาถูกคูณ ~2.4x → ring ดังขึ้นเทียบกับหัว (attack/tail แค่ 4.2 dB)
+   **แก้: ลด satMin/satMax และ outDrive** → attack/tail 4.2 → 9.0 dB
+
+**ผลวัดที่ default (Snap 70%)**: tail@fundamental 76%→27% · attack/tail 4.2→9.0 dB · wire content 1%→37% · body/noise −6.7→−0.1 dB
+
+### ⚠️ Bug ระดับมิกซ์ที่เจอพร้อมกัน (สำคัญ)
+1. **crest factor** — SD 13 dB, CP 16 dB (BD แค่ 5) · พอบาลานซ์ด้วย **RMS** ให้ได้ยิน peak เลยพุ่งไป 2.3–3.3 → ชน master clip → **ทั้งมิกซ์ถูกดึงลง 9 dB ทุกครั้งที่กลองลง = pumping**
+   **แก้: output saturation ต่อ voice** (SD/CP) ลด crest เหลือ 8–9 dB โดย RMS คงเดิม
+2. **master fader อยู่หลัง clipper** — `tanh(sum)*mvMas` → หมุน master ลงไม่ได้ช่วยลดความแตกเลย ผู้ใช้แก้เสียงแตกไม่ได้
+   **แก้: `tanh(sum*busGain*mvMas)`** — master กลายเป็น drive เข้า clipper ตามที่ desk จริงทำ
+3. **busGain 0.42** = headroom คงที่ของบัส · worst-case duck −9 → −3 dB
+   ⚠️ **ถ้าเปลี่ยน level ของ voice ใดต้องเช็ค bus headroom test ใหม่** (เคยพลาด: ดัน SD ขึ้นแล้ว bus เกินทันที)
+
+### ⚠️ เทสต์เคยไม่ fail จริง
+`test_dsp.js` เดิมแค่ `console.log('FAIL')` แล้ว exit 0 → run.sh ขึ้น "ผ่านทั้งหมด" ทั้งที่พัง
+**แก้แล้ว**: มี `fail()` + `process.exitCode=1` · พิสูจน์แล้วว่า break busGain → exit 1 จริง
+
+### "Hollow" — วัดได้ ไม่ใช่ความรู้สึก (สำคัญมาก)
+ผู้ใช้บ่นว่า snare กลวง **ตัวชี้วัดคือ: ยอด resonance ของ body สูงกว่าพื้น noise กี่ dB**
+วัดที่ความหนาแน่นพลังงาน 170-340Hz เทียบ 600-1500Hz · ยอดสูงลอยเหนือพื้นแบนๆ = หูได้ยินเป็น "ท่อ" ไม่ใช่กลอง
+- ~25 dB = tom เต็มตัว (ถูกต้องสำหรับฝั่งซ้ายของ Snap)
+- ~17 dB = **กลวง** ← default เดิมอยู่ตรงนี้
+- ~11-13 dB = snare ที่ฟังดี
+
+**ต้นเหตุจริง: default ของ Snap ปาร์กอยู่ในโซนกลวง ไม่ใช่ตัว voice เสีย** · แก้โดยย้าย default 0.55 → **0.78**
+หลักฐานสนับสนุน: patch ที่ผู้ใช้เซฟเองตั้ง sdSnappy ไว้ **0.94** = เขาหมุนหนีโซนกลวงอยู่แล้ว
+
+**สิ่งที่ลองแล้วไม่ได้ผล (อย่าเสียเวลาซ้ำ)**:
+- เพิ่ม saturation → **แย่ลง** (17.4→20 dB) เพราะไปกดหัวเสียงและดันหางขึ้น
+- ลด body decay ครึ่งหนึ่ง → ดีขึ้นแค่ 0.6 dB
+- เพิ่มโหมดเป็น 4-5 (membrane ratios) → ไม่ช่วย โหมดทั้งหมดอยู่ย่านเดียวกัน
+- เปลี่ยน smoothstep เป็น power curve → ดีขึ้นแค่ 0.9 dB
+- **บทเรียนวิธีวัด**: เคยวัดเป็น % พลังงานต่อแบนด์ แล้วสรุปผิดว่ามี "ช่องว่าง" ที่ 430-1.2k — จริงๆ แบนด์กว้างกว่าย่อมมีพลังงานรวมมากกว่าเสมอ **ต้องวัดความหนาแน่นต่อ Hz** ไม่ใช่ผลรวม
+
+### Clap — จูน (ไม่ได้รื้อ)
+**อาการเดิม**: สว่างไป centroid ~2.7k (clap จริง 1-2k) → ฟังเป็น "noisy snare สว่างๆ" ไม่ใช่มือตบ · burst 3 ชุดสมานเป็นก้อนเดียวที่ spread ปกติ
+**ที่จูน** (คง 3 ปุ่มเดิม): bandpass ต่ำลง 1050→780Hz + **เพิ่ม lowpass roof** (pitch×1.5) ตัด "tss" · เพิ่มเป็น **4 burst** taper 0.86 (แต่ละตบเบาลง) → attack ฟูขึ้น
+ผล: centroid default = 1984Hz (เข้าเป้า) · pitch ยังกวาด 1079→3425Hz
+**Decay range แก้** (ผู้ใช้บ่นว่าต้องหมุนสุดถึงจะกรอบ): เดิม floor 40ms → 0% ยังหลวม (192ms หาง) · **ตัวคุมความกรอบจริงคือ tailDecayS floor ไม่ใช่ spread** (spread แคบทำให้ burst ซ้อนเป็นก้อนยาว = หลวมกว่าเดิม เกือบหลงทาง) · แก้ floor 40→6ms · ตอนนี้ knob 0%=49ms(กรอบ) default 30%=75ms 100%=496ms(หลวม)
+**⚠️ ระดับ**: clap เป็น burst สั้นๆ พลังงานต่ำโดยธรรมชาติ (raw RMS 0.086) ต้อง `level:9.5` + fader 0.60 ถึงจะอยู่ **-5 dB ใต้ kick** · raw peak เลย 1.0 ได้ (fader ดึงลง) — เทสต์ solo peak≈1 เดิมใช้ไม่ได้แล้ว เปลี่ยนเป็น **kit balance test** วัด dB ในมิกซ์แทน
+
+**ยังไม่ได้ทำ (ถ้าอยากได้ clap แท้)**: room simulation — clap จริงคือ burst เดียวกันเล่นซ้ำผ่านห้องที่มี reverb · เรามีแค่ bandpass tail ไม่มีห้อง · จูนแล้วดีขึ้นแต่ถ้าอยาก "เป็น clap ไม่ใช่ snare" ต้องเพิ่ม feedback taps สั้นๆ (ครึ่งวัน, ปุ่ม Room ใหม่)
+
+### Snare — 809 rebuild (รื้อใหม่ทั้งตัว)
+**อาการเดิม**: เสียงบางและกลวง ผู้ใช้บอกว่า "เหมือน cymbal หรือ hi-hat อีกตัว" — เพราะ body เป็น sine คู่สะอาดๆ เบาไป noise เลยเด่นจนหูจัดเป็นเครื่องเคาะโลหะ ซ้ำร้าย bandpass ที่ผมใส่ตอนแก้ Snappy ทำให้ noise ยิ่ง "ร้อง" เป็น tone = ยิ่งเหมือน cymbal
+
+**ที่แก้**:
+1. **body = dual resonance + pitch drop + tanh saturation** — sat เป็นตัวทำให้ body ฟังเป็น "กลอง" ไม่ใช่ "โทน" (แก้กลวง) และ body ที่หนักขึ้นเป็นฐานให้ noise เกาะ (แก้เหมือน hi-hat)
+2. **noise band กว้างขึ้น Q ต่ำลง** (Q 0.7) ไม่ track pitch แบบเป๊ะ → ฟังเป็น "rattle" ไม่ใช่ "ring"
+
+**Snap เป็น bipolar (plan B)**: knob เดียว = แกน tom↔snare
+- 0–33% = โซน tom (body ล้วน, noise หายไปทางซ้ายสุด) · 33–100% = โซน snare
+- **ไม่มีปุ่ม BODY แยก** — ความหนาของ body เป็นฟังก์ชัน baked ของตำแหน่ง Snap (หมุนทีเดียวได้จุดบนเส้น tom-snare ไม่ต้อง balance สองปุ่ม)
+- ผู้ใช้ตัดสิน: **ไม่อยากได้กรณี "crack เดิมแต่หนักขึ้น"** จึงยืนยัน 3 ปุ่มพอ
+
+**ตัวเลขวัดหลังรื้อ** (Snap tom→snare):
+- swing loudness = 1.5 dB (ยอมให้ tom หนักกว่านิดตามธรรมชาติ)
+- timbre ขยับ 22.4 semitone
+- **low-mid ที่ Snap 100% = 89%** ← หลักฐานว่า snare ยังมี body ไม่ยุบเป็น hi-hat (มีเทสต์คุม)
+- punch (attack/rms) ไล่ 2.2→7.4 จาก tom ไป snare
+- full mix peak 0.85 ไม่ clip
+
+**⚠️ Crest factor / master clip** (เจอตอนผู้ใช้บอก "snare รู้สึกผิดปกติ"): snare/clap มีทรานเซียนต์แหลม crest 13/16 dB เทียบ kick 5 dB · พอบาลานซ์ด้วย **ค่าเฉลี่ย** ให้ได้ยิน → **ยอด** พุ่ง 2.3-3.3 ชน master soft-clip ทำให้ทั้งมิกซ์ถูกกด ~9 dB ทุกครั้งที่กลองลง (pumping)
+แก้ 2 อย่าง: (1) **output saturation ต่อ voice** (`outDrive/outMakeup`) ลด crest เหลือ 8-9 dB โดยไม่เสียความดัง (2) **`busGain` + ย้าย master fader เข้าไปใน tanh** — เดิม `tanh(sum)*mvMas` แปลว่าหรี่ master ไม่ช่วยลดความแตกเลย ผู้ใช้แก้เสียงแตกไม่ได้ · ตอนนี้ `tanh(sum*busGain*mvMas)` ยอดกดเหลือ ~3 dB และ master คุมได้จริง
+**⚠️ ระดับในมิกซ์**: หลังรื้อ snare เคยจมกว่า kick ถึง 14 dB (fader default 0.42 ค้างมาจาก snare บางตัวเก่า) · แก้เป็น `level:1.20` + fader default **vSD 0.72** → SD อยู่ **-3.4 dB ใต้ BD** (พ็อกเก็ตที่ snare ควรอยู่) · CP ดันเป็น 0.48 ด้วย · comp coefficients เป็น ratio จึงไม่เปลี่ยนตาม level
+**⚠️ semantics เปลี่ยน — pattern เก่ากระทบ**: `sdDecay` เดิมเป็นวินาที (0.04–0.6) ตอนนี้เป็น normalized (0–1) · `sdPitch` เดิม 70–400 ตอนนี้ 120–260 · `sdSnappy` เดิม unipolar ตอนนี้ bipolar · ค่าเก่า clamp เข้า range ได้ ไม่ crash แต่เสียงจะต่างไป (เลี่ยงไม่ได้เมื่อรื้อ voice)
+**⚠️ comp เป็น cubic fit ตลอด throp** — ถ้าแก้ gain/sat ใน macro ต้อง re-fit (สคริปต์อยู่ที่ commit history / วิธี: วัด raw RMS ปิด comp แล้ว least-squares cubic)
+
 ### กลอง — latch ค่าตอน trigger
 Knob กลองถูกอ่าน**ครั้งเดียวตอนถูกตี** ไม่ใช่ทุก sample
 เหตุผล: เสียงกลองสั้น ไม่ต้องเปลี่ยนกลางเสียง → `Math.exp()` รันไม่กี่ครั้งต่อวินาที และ **ไม่ต้องมี smoothing เลย** เพราะค่าไม่ขยับระหว่างเสียงดัง
@@ -134,30 +217,57 @@ accent buildup (ตัวเก็บประจุ C13), ของจริง
 ### ประสิทธิภาพ
 | | |
 |---|---|
-| 303 + กลอง 5 เสียงเต็มที่ | **~8% CPU** peak 0.87 RMS 0.40 NaN 0 |
-| **หยุดเล่น เงียบสนิท** | **ยังกิน 8.3% CPU** ← ปัญหา ดู §7 |
+| 303 + กลอง 5 เสียงเต็มที่ | **6.4% CPU** peak 0.84 NaN 0 |
+| หยุดเล่น เงียบสนิท | **3.4% CPU** (เดิม 8.3% ก่อนทำ voice deactivation) · ที่เหลือคือ 303 |
 
 ### ความแรงของ knob กลอง (วัดจาก spectral centroid / ความยาวหาง)
 | ปุ่ม | ผลจากปลายถึงปลาย |
 |---|---|
-| SD Pitch | 8.9 semitone |
+| SD Pitch | 8.9 semitone (ช่วงกว้างขึ้นเป็น 70–400Hz แล้ว) |
 | SD Decay | หางยาวขึ้น 6.4 เท่า |
-| SD Snappy | 26 semitone |
+| SD Snappy | 28.8 semitone · ระดับเสียงนิ่ง 0.20 dB |
 | CP Pitch | 11.6 semitone |
 | CP Decay | หางยาวขึ้น 5.5 เท่า |
-| CP Spread | เปลี่ยน**จังหวะ** ไม่ใช่ความถี่ — วัดด้วย centroid ไม่เห็น ต้องดู envelope |
+| CP Spread | เปลี่ยน**จังหวะ** ไม่ใช่ความถี่ — วัดด้วย centroid ไม่เห็น ต้องดู envelope · ใส่ `pow:3.1` แล้ว |
 
 > **บทเรียนสำคัญ**: SD Pitch เคยตายสนิท (0.2 semitone) เพราะไปแตะแค่ body ซึ่งถูก noise กลบหมด
 > แก้โดยให้ pitch ลาก noise bandpass ไปด้วย — **ปุ่มที่ดีต้องขยับหลายพารามิเตอร์พร้อมกัน ไม่ใช่ค่าเดียว**
 > เทสต์ knob sweep เดิม (เช็ค NaN + peak) **ผ่านฉลุยทั้งที่ปุ่มตาย** → ต้องวัด "เสียงเปลี่ยนกี่ semitone" ด้วย
 
+### CP Spread — ช่วงปุ่มออกแบบผิด (ผู้ใช้จับได้จากการเล่นจริง)
+หูคนรวมเสียงที่ห่างกันต่ำกว่า ~30–50ms เป็นเสียงเดียว · clap มี 3 burst ดังนั้นช่วงรวม = spread × 3
+
+| spread | ช่วงรวม | ได้ยินเป็น |
+|---|---|---|
+| 4ms | 12ms | เสียงเดียว (เปลี่ยน texture) |
+| 8ms | 24ms | เสียงเดียว |
+| 12ms | 36ms | เริ่มแยก = flam |
+| 28ms | 84ms | flam เต็มตัว |
+
+จุดตัดอยู่ที่ **~11–12ms = แค่ 1 ใน 3 ของระยะหมุน** → สองในสามของปุ่มอยู่ในโซนที่ไม่ได้ใช้จริง
+**แก้แล้วด้วย `pow:3.1`** (ไม่ได้หดช่วง — flam ยังมีที่ใช้เป็นลูกเล่นตั้งใจ แค่ไม่ควรขวางโซนหลัก)
+ตอนนี้: ปุ่ม 50% = 6.8ms · 70% = 11.9ms (จุดตัด) · 100% = 28ms
+
+### SD ที่ Snappy ต่ำ = perc/tom (ได้มาฟรี — อย่าเผลอทำหาย)
+centroid ที่ Snappy 0% ไล่ 278Hz → 616Hz ตามพิตช์ = เป็นเสียง**มีระดับเสียงชัด** ไม่ใช่ noise
+
+| snappy | 110Hz | 182Hz | 260Hz | 340Hz |
+|---|---|---|---|---|
+| 0% | 278 | 507 | 533 | 616 |
+| 15% | 799 | 1228 | 1538 | 1533 |
+| 30% | 1221 | 1731 | 2113 | 2177 |
+
+**เราตัด Tom ออกตาม YAGNI แต่กลายเป็นได้มันมาฟรีอยู่แล้ว** แค่หมุน Snappy ลงสุด
+→ ตอนทำ Snappy macro **ห้ามกลบโซนนี้ทิ้ง มันคือฟีเจอร์ ไม่ใช่ผลข้างเคียง**
+→ ข้อจำกัด: ช่วงพิตช์ตอนนี้ 110–340Hz (19.5 semitone) พื้นล่างสูงเกินไปสำหรับ tom ต่ำ (floor tom จริง ~80–100Hz)
+
 ### ผลตรวจกับสเปกภายนอก (ผู้ใช้เอาสเปก groovebox จากที่อื่นมาเทียบ)
 | ข้อ | ผล |
 |---|---|
-| Snap 0↔1 ดังต่างไม่เกิน 2-3 dB | **ตก — 3.7 dB และแกว่งไม่เป็นเส้น** (0%=-14.0 · 50%=-17.6 · 100%=-15.4 dB) |
+| Snap 0↔1 ดังต่างไม่เกิน 2-3 dB | ✅ **ผ่านแล้ว — 0.20 dB** (เดิมตก 3.7 dB และแกว่งไม่เป็นเส้น) |
 | choke ต้อง 5–18ms ไม่งั้น click | **ผ่านแม้ใช้ 2ms** — ความชันตอน choke 0.278 < ตอนเล่นปกติ 0.631 → ไม่ต้องแก้ |
 | ห้าม reset noise seed ทุก hit | ผ่านอยู่แล้ว (noise เดินต่อเนื่อง ไม่ reset ใน `trigger`) |
-| deactivate voice ต่ำกว่า -72dB | **ตก — ยังไม่ทำ** |
+| deactivate voice ต่ำกว่า -72dB | ✅ **ผ่านแล้ว** (`SILENT` const — ต้องอยู่ใน WORKLET_CODE list ด้วย) |
 
 > สเปกนั้นมีบั๊ก: `fastSoftClip` clamp ที่ ±1.5 แต่อนุพันธ์ `1-x²` เป็นศูนย์ที่ x=1 → เลยไปคือพับกลับ
 > (input 1.0 → 0.667 แต่ input 1.5 → 0.375) นั่นคือ wavefolder ไม่ใช่ soft clip · ถ้าจะใช้ต้อง clamp ±1.0
@@ -166,18 +276,44 @@ accent buildup (ตัวเก็บประจุ C13), ของจริง
 
 ## 7) คิวงาน
 
-### ถัดไป (ตกลงกันแล้ว รอลงมือ)
-1. **Voice deactivation** ต่ำกว่า -72dB — คืน CPU 8.3% ที่ทิ้งเปล่า (~10 บรรทัด)
-2. **อัปเกรด Snappy เป็น macro จริง** — noise gain + brightness + noise decay + ลด body + **ชดเชยระดับให้ไม่แกว่ง** (แก้ปุ่มที่มีอยู่ ไม่เพิ่มปุ่มใหม่)
+### ✅ เสร็จแล้ว — 4 ชิ้นในคิวเดิม (ทำพร้อมกันรอบเดียว)
 
-### หลังจากนั้น
-3. **Delay** — ตกลงแล้วว่า **insert บน 303** (ไม่ใช่ master เพราะ kick เข้า feedback loop จะกองเป็นโคลน) · **ใส่ one-pole LP ใน feedback loop** (เสียงย้ำทึบลงเรื่อยๆ แบบ dub) · **sync กับ clock แล้วปล่อยให้กระโดดตอนเปลี่ยน BPM**
+1. **Snappy เป็น macro จริง** — knob เดียวขยับ 5 อย่าง: noise gain · transient crack · ความสว่างของ noise band · ความยาวหาง noise · ลด body เล็กน้อย → แล้วหารด้วยค่าชดเชย
+   ผล: **แกว่ง 3.7 dB → 0.20 dB** และไม่แกว่งขึ้นลงกลางทางแล้ว · texture ยังขยับ **28.8 semitone**
+   ⚠️ `noiseG` ต้องเป็น **0 เป๊ะ** ที่ Snappy 0 — ความเงียบนั้นคือสิ่งที่เปิดให้ body โผล่มาเป็น perc
+   ⚠️ **ค่าชดเชยเป็น cubic ที่ fit จากการวัด ไม่ใช่สูตรทฤษฎี** — ลองใช้ quadrature ก่อนแล้วพลาด 5.6 dB เพราะแต่ละส่วนมี decay ต่างกัน พลังงานไม่ได้รวมกันง่ายแบบนั้น · **ถ้าแก้ gain ในmacro ต้อง fit ใหม่ อย่าเดาปรับ**
+2. **Voice deactivation** ที่ -72dB (`SILENT`) — **CPU ตอนหยุดเล่น 8.3% → 3.4%** · ที่เหลือคือ 303 ซึ่งยังไม่ปิด (filter reso สูงอาจ ring ค้างได้ ต้องคิดเงื่อนไขให้ดีกว่านี้ก่อน)
+3. **Spread curve** `pow:3.1` — โซน 4–12ms กินระยะหมุน 70% แล้ว (เดิม 33%)
+4. **SD Pitch 70–400Hz** — จาก 19.5 เป็น 30 semitone ปลดล็อกโหมด perc/tom
+
+### ถัดไป
+5. **P-locks** — ตกลงกันแล้วว่าจะทำ (ดู §7.5)
+6. **Delay** — ตกลงแล้วว่า **insert บน 303** (ไม่ใช่ master เพราะ kick เข้า feedback loop จะกองเป็นโคลน) · **ใส่ one-pole LP ใน feedback loop** (เสียงย้ำทึบลงเรื่อยๆ แบบ dub) · **sync กับ clock แล้วปล่อยให้กระโดดตอนเปลี่ยน BPM**
    → เขียนเป็นคลาสรับ sample เข้า/คืน sample ออก **ไม่ผูกกับ 303** เผื่ออัปเป็น send bus ทีหลัง
    → จอง `Float32Array` ใน constructor ขนาด max delay (ห้าม allocate ใน loop)
-4. **Mute ต่อแทร็ค** — gain 0/1 ต่อ voice ก่อน sum
+6. **Mute ต่อแทร็ค** — gain 0/1 ต่อ voice ก่อน sum
+
+## 7.5) P-locks — ออกแบบไว้แล้ว รอลงมือ
+
+ผู้ใช้เลือก **p-lock** (ค่าต่อ step) ไม่ใช่ motion recording · เทียบแล้วเหมือน effect column ของ tracker
+
+**ทำไมถูกกว่ามาก**: step เป็น object อยู่แล้ว และ **knob กลอง latch ตอน trigger อยู่แล้ว** — p-lock คือ "อ่านค่านี้แทน" ณ จังหวะนั้น เครื่องมือมีครบแล้ว
+ส่วน motion recording ต้องมี timeline, ความละเอียด, interpolation, UI ดู/ลบ lane
+
+**สิ่งที่เครื่องจริงทำ** (ค้นมาแล้ว): Elektron = p-lock ต่อ step (กด step ค้างแล้วหมุน) · ReBirth = อัดการหมุนปุ่มแบบ real-time **แต่มีเฉพาะใน Song mode** — automation กับ song mode เป็นฟีเจอร์เดียวกันในนั้น · ReBirth ยังมี **PCF** = step sequencer แยกตัวขับ filter (เราตัดไปตาม YAGNI)
+
+**บทเรียนจาก ReBirth ที่ต้องไม่พลาดซ้ำ**: v1 พอเข้า Song mode แล้วแตะปุ่ม = อัดทันที ต้อง commit · v2 แก้ให้แตะได้โดยไม่อัด
+→ **การหมุนปุ่มต้องไม่อัดอะไรเงียบๆ ต้อง arm ก่อนเสมอ**
+
+**แผนที่ตกลงไว้**
+- โหมดที่สาม `LOCK` ต่อจาก `PITCH | TIME` — เลือก step แล้วหมุน knob = เขียนลง step นั้น (บนมือถือกด step ค้างไม่ได้ จึงใช้โหมดแทน)
+- **303 ก่อน** 5 ค่า: cutoff, reso, envMod, decay, drive · ไม่เอา tune (โน้ตทำหน้าที่นั้นแล้ว) ไม่เอา accent (เป็น flag ต่อ step อยู่แล้ว)
+- step ได้ field `p:{cutoff:900}` — ไม่มี = ใช้ค่า knob (เหมือน effect column ว่างใน tracker)
+- **hash → v5** · bank format ไม่ต้องแก้ เพราะ lock อยู่ใน `seq` ตามที่วางไว้
+- ต้องมี: ปุ่มล้าง lock ของ step, จุดบอกบน grid ว่า step ไหนมี lock, และ dial ต้องแสดงว่ากำลังถือค่า lock อยู่ไม่ใช่ค่า global
 
 ### รอหูผู้ใช้ตัดสิน (อย่าเดาแทน)
-- Snappy กับ Spread ใช้จริงมั้ย → คำตอบจะบอกว่า BD/CH/OH ควรได้ปุ่มอะไร
+- **BD กับ CH/OH ควรได้ปุ่มอะไร** — หลักฐานจากการเล่นจริงถึงตอนนี้: ผู้ใช้ขยับ **Pitch กับ Decay ทั้ง SD และ CP** แต่**ไม่แตะ Spread เลย** → ถ้ายืนยันอีกรอบ ให้เริ่มที่ Pitch + Decay ก่อน ตัวที่สามค่อยว่ากัน
 - เสียง snare หลังเปลี่ยน noise เป็น bandpass โอเคมั้ย หรือเสียตัวตนเดิมไป (ปรับได้ที่ `TUNING.sd.noiseQ` 1.4 / `noiseRatio` 9.0)
 
 ### ตัดสินใจไปแล้ว อย่ารื้อ
@@ -218,6 +354,29 @@ freq = baseHz * Math.pow(2, curved*rangeSemitones/12);
 | driveGain / outGain | 6 / 0.9 | distortion / level ออก |
 
 ---
+
+## 8.5) Reference patch สำหรับ A/B
+
+deploy แล้วที่ **https://fckers00-cmd.github.io/RB303/** (GitHub Pages · https จริง → ได้ AudioWorklet ไม่ใช่ fallback)
+
+**patch อ้างอิงที่ผู้ใช้ตั้งเอง** — เก็บไว้ใช้เทียบก่อน/หลังทุกครั้งที่แก้เสียง
+งานที่ตัดสินด้วยหูต้อง A/B ได้ ไม่งั้นจะรู้แค่ว่า "เปลี่ยนไป" แต่ไม่รู้ว่า "ดีขึ้นมั้ย"
+
+```
+#p=eyJ2Ijo0LCJ0IjoxMzAsInciOjAsImsiOnsidHVuZSI6MCwiY3V0b2ZmIjo1MjYuNzUyNzkzNDY5NDk0OSwicmVzbyI6MC42MTI4ODE5NzgzNTI4NjQ1LCJlbnZNb2QiOjAuMzE3Njg1MTA2MDY1NTM4MjQsImRlY2F5IjowLjQsImFjY2VudCI6MC41LCJkcml2ZSI6MC4zNSwic2RQaXRjaCI6MjMzLjg4MzM5MDYwNTczNTQzLCJzZERlY2F5IjowLjEyMDM4MzU1MTA0NTYxMDI0LCJzZFNuYXBweSI6MC45NDE2NjY2MzI3NTgyNDY2LCJjcFBpdGNoIjoxMzY1LjU5MjU4MjkyNTU0NTUsImNwRGVjYXkiOjAuMDg1MDgyMjA3ODcwNTA2OCwiY3BTcHJlYWQiOjAuMDF9LCJsIjoxNiwicyI6W1szNiwxLDEsMF0sWzM2LDIsMCwwXSxbNDgsMSwwLDBdLFszNiwwLDAsMF0sWzM2LDEsMCwwXSxbMzksMSwxLDFdLFszNiwxLDAsMF0sWzM2LDAsMCwwXSxbNDYsMSwwLDBdLFszNiwxLDEsMF0sWzM2LDIsMCwwXSxbNDMsMSwwLDBdLFszNiwxLDAsMF0sWzM2LDAsMCwwXSxbMzksMSwxLDBdLFszNiwxLDAsMF1dLCJkIjp7IkJEIjoiMTAwMDEwMDAxMDAwMTAwMCIsIlNEIjoiMDAwMDAwMDAwMDAwMDAwMCIsIkNIIjoiMDAxMDAwMTAwMDEwMDAxMCIsIk9IIjoiMDAwMDAwMDAwMDAwMDAwMCIsIkNQIjoiMDAwMDEwMDAwMDAwMTAwMSJ9LCJtIjp7InYzMDMiOjAuNTUsInZCRCI6MC42NSwidlNEIjowLjQyLCJ2Q0giOjAuMzIsInZPSCI6MC4zMiwidkNQIjowLjQsInZNYXMiOjAuOX19
+```
+
+```
+time  ● ○ ● — ● ● ● — ● ● ○ ● ● — ● ●
+note  C2    C3    C2  D#2 C2    A#2 C2    G2  C2    D#2 C2
+acc   A · · · · A · · · A · · · · A ·
+slide · · · · · S · · · · · · · · · ·
+BD    ● · · · ● · · · ● · · · ● · · ·
+CH    · · ● · · · ● · · · ● · · · ● ·
+CP    · · · · ● · · · · · · · ● · · ●
+```
+
+knob ที่ต่างจากค่าเริ่มต้น: cutoff 527 · reso 0.61 · envMod 0.32 · sdPitch 234 · sdDecay 0.12 · **sdSnappy 0.94** · cpPitch 1366 · cpDecay 0.085 · cpSpread 0.010 (ไม่แตะ)
 
 ## 9) Environment
 
