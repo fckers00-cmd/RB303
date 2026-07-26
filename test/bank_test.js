@@ -43,7 +43,9 @@ function boot(store){
   const api=eval(sm+'\n;({seqSnapshot,sndSnapshot,applySeq,applySnd,snapshot,'+
     'readBank,writeBank,renderSlots,tapSlot,state,BANK_KEY,SLOT_COUNT,KNOBDEF,'+
     'setCtl:(c)=>{ctl=c;}, setStarted:(b)=>{started=b;}, setBooted:(b)=>{booted=b;},'+
-    'undoPending:()=>!!bankUndo, getSlotSel:()=>slotSel})');
+    'undoPending:()=>!!bankUndo, getSlotSel:()=>slotSel, getBank:()=>bank,'+
+    'saveToSlot:(name)=>{ bank[slotSel]={n:name,seq:seqSnapshot(),snd:bankSnd(sndSnapshot())};'+
+    ' writeBank(); }})');
   return {api,els};
 }
 
@@ -200,6 +202,41 @@ const ok=(name,cond,extra)=>{ console.log((cond?'OK   ':'FAIL ')+name+(cond?'':'
     ok('tap the same slot twice still undoes', firstNote(api)===before,
        'ได้ note '+firstNote(api)+' ควรได้ '+before);
     ok('undo is spent after it runs', api.undoPending()===false); }
+}
+
+// 10) a slot must never move the mixer.
+//     The mixer is the instrument's, not the pattern's. A slot saved while the
+//     faders were down used to pull all seven to zero on load — the whole box
+//     went quiet and no pattern loaded afterwards brought it back, because the
+//     mixer is global. Old slots already carry those zeros, so reading has to
+//     drop them too, not just saving.
+{
+  const pat=new Array(16).fill(0).map((_,i)=>[40+i%7,1,0,0]);
+  const seq={ s:pat, d:{BD:'1000100010001000',SD:'0'.repeat(16),CH:'0'.repeat(16),
+                        OH:'0'.repeat(16),CP:'0'.repeat(16)}, l:16 };
+  const silent={ w:0, t:130, k:{cutoff:2500},
+                 m:{v303:0,vBD:0,vSD:0,vCH:0,vOH:0,vCP:0,vMas:0} };
+
+  { /* a slot stored by an older build, zeros and all */
+    const st=memStore();
+    st.setItem('rb303.bank.v1',JSON.stringify([{n:'quiet',seq,snd:silent}]));
+    const {api}=boot(st); api.setBooted(true); api.readBank();
+    const mixBefore=JSON.stringify(api.state.mix);
+    api.tapSlot(0);
+    ok('loading an old slot leaves the mixer alone',
+       JSON.stringify(api.state.mix)===mixBefore, 'mixer กลายเป็น '+JSON.stringify(api.state.mix));
+    ok('the pattern still loads', api.state.pattern.filter(x=>x.t===1).length===16);
+    ok('stored mixer is dropped on read', !('m' in (api.getBank()[0].snd||{}))); }
+
+  { /* and a slot saved now must not carry the mixer either */
+    const {api}=boot(memStore()); api.setBooted(true);
+    api.state.mix.vMas=0;
+    api.saveToSlot('now');
+    ok('saving a slot does not store the mixer', !('m' in (api.getBank()[0].snd||{}))); }
+
+  { /* Copy Link is the opposite call: a shared track keeps its balance */
+    const {api}=boot(memStore());
+    ok('the URL snapshot still carries the mixer', 'm' in api.snapshot()); }
 }
 
 console.log(fails? '\n'+fails+' รายการไม่ผ่าน' : '\nbank: ผ่านทั้งหมด');

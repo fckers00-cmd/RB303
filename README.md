@@ -9,9 +9,9 @@
 
 ## เล่นเลย
 
-**https://fckers00-cmd.github.io/RB303/rb303.html**
+**https://fckers00-cmd.github.io/RB303/**
 
-หรือเปิด `rb303.html` จากเครื่องก็ได้
+หรือเปิด `index.html` จากเครื่องก็ได้
 
 > ⚠️ เปิดจาก `file://` เบราว์เซอร์จะบล็อก AudioWorklet แล้วตกไปใช้ ScriptProcessor แทน
 > เสียงยังออกปกติแต่ latency สูงกว่า · จะได้ worklet เต็มๆ ต้อง host บน https
@@ -32,7 +32,7 @@
 | **Length** | ตั้งความยาว pattern 1–16 step |
 | **▲** | พับ grid เก็บเมื่อหน้าล่างต้องการที่ |
 | **Clr** (หน้า STEP) | ล้างแทร็คปัจจุบัน · กดซ้ำภายใน 5 วิ = undo |
-| **Bank** | 8 ช่องเก็บ pattern · แตะ = โหลด · Save = เก็บทับ · แตะช่องเดิมซ้ำภายใน 5 วิ = undo |
+| **Bank** | 8 ช่องเก็บ pattern · แตะ = โหลด · Save = เก็บทับ · แตะช่องเดิมซ้ำภายใน 5 วิ = undo · ไม่ยุ่งกับ mixer |
 | **Delay** (หน้า FX) | insert บนเสียง 303 · sync กับ tempo · เริ่มต้น Mix=0 (ปิด) |
 
 state ทั้งหมดถูกเข้ารหัสลง URL อัตโนมัติ — ก๊อป URL = ก๊อปเพลง
