@@ -339,7 +339,7 @@
   จากนั้นกด <b>PITCH</b> ใส่โน้ต accent slide เฉพาะช่อง ● (ช่อง ○ ไม่มีพิตช์ของตัวเอง เหมือนเครื่องจริง) ·
   <b>กลอง</b>: แตะครั้งเดียว วนเป็น ปิด → เปิด → เปิด+accent · <b>CH ตัด OH อัตโนมัติ</b> (choke แบบ 808) ·
   <b>Accent</b> = ดัง+filter วืด · <b>Slide</b> = โน้ตผูก portamento ·
-  <b>Copy Link</b> = แชร์สถานะปัจจุบันเป็นลิงก์ · <b>Delay</b> = เอฟเฟกต์ใส่เฉพาะเสียง 303 · sync กับ tempo อัตโนมัติ · เริ่มต้น Mix=0 (ปิด) หมุนขึ้นเพื่อเปิด · <b>Bank</b> = 8 ช่องเก็บ pattern ในเครื่อง (แตะช่อง = โหลด, Save = เก็บทับ, แตะซ้ำภายใน 5 วิ = undo) · <b>Export ไฟล์ JSON ไว้เป็นระยะ</b> เพราะ bank หายถ้าล้างข้อมูลเว็บ ·
+  <b>Copy Link</b> = แชร์สถานะปัจจุบันเป็นลิงก์ · <b>Delay</b> = เอฟเฟกต์ใส่เฉพาะเสียง 303 · sync กับ tempo อัตโนมัติ · เริ่มต้น Mix=0 (ปิด) หมุนขึ้นเพื่อเปิด · <b>Bank</b> = 8 ช่องเก็บ pattern ในเครื่อง (แตะช่อง = โหลด, Save = เก็บทับ, แตะช่องเดิมซ้ำภายใน 5 วิ = undo) · <b>Export ไฟล์ JSON ไว้เป็นระยะ</b> เพราะ bank หายถ้าล้างข้อมูลเว็บ ·
   Scope: เส้นบน = waveform, เส้นล่าง = spectrum (ดู resonance peak วิ่งตาม envelope ได้เลย)
 </div>
 
@@ -1276,6 +1276,11 @@ function runBankUndo(){
   f(); bankMsg('ย้อนกลับแล้ว'); renderSlots();
   setTimeout(()=>{ if(!bankUndo) bankMsg(''); },1500);
 }
+/* moving on to another slot is a decision, not a mistake — drop the offer */
+function cancelBankUndo(){
+  if(!bankUndo) return;
+  bankUndo=null; clearTimeout(bankUndoT); bankMsg('');
+}
 
 function renderSlots(){
   slotsEl.innerHTML='';
@@ -1293,7 +1298,11 @@ function escapeHtml(s){ return String(s).replace(/[&<>"']/g,c=>
   ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 function tapSlot(i){
-  if(bankUndo){ runBankUndo(); return; }          // second tap anywhere = undo
+  /* Undo is a second tap on the SAME slot. It used to fire on a tap anywhere,
+     which meant auditioning the bank was impossible: tap 1, tap 2, and instead
+     of loading 2 you got 1 rolled back — you had to tap 2 twice to hear it. */
+  if(bankUndo && i===slotSel){ runBankUndo(); return; }
+  cancelBankUndo();
   slotSel=i;
   if(!bank[i]){ renderSlots(); bankMsg('ช่อง '+(i+1)+' ว่าง — กด Save เพื่อเก็บสิ่งที่กำลังทำอยู่'); return; }
   const before={seq:seqSnapshot(),snd:sndSnapshot()};
@@ -1673,6 +1682,13 @@ function applySnd(n){
     if(c && isFinite(v)) state.params[key]=Math.max(c.min,Math.min(c.max,v));
   }
   if(booted) buildKnobs(state.track);          // re-render dials from new values
+  /* buildKnobs only pushes the knobs it just drew — one track's worth, and the
+     FX panel never. Loading a patch has to reach the engine whole, otherwise the
+     voices you cannot see keep the previous patch's sound: load a bright patch
+     while sitting on a drum track and the 303 stays on the old closed filter,
+     which reads as "the pattern loaded but there is no sound". Push every knob,
+     same list initAudio pushes on start. */
+  if(started&&ctl) for(const key in KNOBDEF) ctl.setParam(key,state.params[key]);
   if(n.m) for(const key in n.m){ if(mixCtl[key]) mixCtl[key].set(+n.m[key]); }
 }
 
