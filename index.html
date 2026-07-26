@@ -162,50 +162,80 @@
   .tiehint b{color:var(--slide)}
   .hint{font-size:11px;color:var(--muted);line-height:1.55;margin-top:14px;border-top:1px solid var(--line);padding-top:12px}
   .hint b{color:var(--ink)}
+
+  /* ================= APP SHELL =================
+     Three regions: a pinned deck, one scrolling page, fixed tabs.
+     The deck earns its height only if it stays lean — every extra row taken
+     from the page below. So it holds ONLY what you touch while playing.
+     Diagnostics, pattern actions and share buttons live on the pages. */
+  html,body{height:100%;margin:0;overflow:hidden}
+  body{display:flex;flex-direction:column;max-width:none;padding:0}
+
+  .deck{flex:0 0 auto;background:var(--panel2);border-bottom:1px solid var(--line);
+    padding:8px 12px 9px;z-index:5;box-shadow:0 10px 22px -14px #000}
+
+  .deckbar{display:flex;align-items:center;gap:11px}
+  .deckbar .play{width:42px;height:42px;flex:0 0 auto;font-size:15px;margin:0}
+  .idb{flex:0 0 auto}
+  .idb .logo{font-size:15px;font-weight:800;letter-spacing:.04em;margin:0;line-height:1}
+  .bpmline{font-family:ui-monospace,monospace;font-size:10px;color:var(--muted);
+    letter-spacing:.1em;margin-top:3px}
+  .bpmline b{color:var(--ink);font-size:12px}
+
+  /* scope becomes a strip in the header — always visible, 42px instead of a panel */
+  .strip{flex:1 1 auto;height:42px;border-radius:6px;overflow:hidden;
+    background:var(--inset);border:1px solid var(--line)}
+  .strip canvas{display:block;width:100%;height:100%}
+
+  .tempoline{-webkit-appearance:none;width:100%;height:16px;background:transparent;margin:7px 0 2px}
+  .tempoline::-webkit-slider-runnable-track{height:3px;border-radius:2px;background:var(--inset)}
+  .tempoline::-webkit-slider-thumb{-webkit-appearance:none;width:15px;height:15px;border-radius:50%;
+    background:var(--ink);border:3px solid var(--panel2);margin-top:-6px}
+  .tempoline::-moz-range-track{height:3px;border-radius:2px;background:var(--inset)}
+  .tempoline::-moz-range-thumb{width:15px;height:15px;border-radius:50%;background:var(--ink);border:3px solid var(--panel2)}
+
+  .deck .tracks{margin:6px 0 7px}
+  .deck .pmrow{margin:0 0 7px}
+  .fold{background:none;border:0;color:var(--muted);font-size:11px;cursor:pointer;padding:4px 2px 4px 8px}
+
+  .gridwrap{overflow:hidden;transition:max-height .22s ease,opacity .18s ease;max-height:200px;opacity:1}
+  .gridwrap.folded{max-height:0;opacity:0}
+  .gridwrap .steps+.steps{margin-top:5px}
+  .deck .steps{gap:5px}
+
+  .page{flex:1 1 auto;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 12px 20px}
+  .pg{display:none}
+  .pg.on{display:block}
+  .page .panel{margin-bottom:12px}
+  #status{margin:16px 0 0;font-size:10px;text-align:center}
+
+  .tabs{flex:0 0 auto;display:grid;grid-template-columns:repeat(5,1fr);
+    background:var(--panel2);border-top:1px solid var(--line);
+    padding:6px 6px calc(6px + env(safe-area-inset-bottom));z-index:5}
+  .tabs button{background:none;border:0;color:var(--muted);cursor:pointer;padding:7px 0 5px;
+    font-size:9px;letter-spacing:.14em;font-weight:700;border-radius:8px;
+    display:flex;flex-direction:column;align-items:center;gap:5px;font-family:inherit}
+  .tabs button .ic{width:18px;height:18px;opacity:.7;display:block}
+  .tabs button .ic svg{display:block;width:100%;height:100%}
+  .tabs button.on{color:var(--accent)}
+  .tabs button.on .ic{opacity:1}
 </style>
 </head>
 <body>
-<header>
-  <div class="logo">RB<b>-</b>303</div>
-  <div class="tag">acid engine · web audio</div>
-</header>
-<div id="status">engine: idle · กด ▶ เพื่อเริ่ม</div>
 
-<div class="panel">
-  <div class="transport">
+<!-- ===== PINNED DECK — transport, track select and the grid never scroll away.
+     Same idea as hardware: the trig keys are always under your hands no matter
+     which parameter page you are on. ===== -->
+<div class="deck">
+  <div class="deckbar">
     <div class="play" id="play">▶</div>
-    <div class="tempo">
-      <div class="row"><span class="mono" style="font-size:10px;letter-spacing:.2em;color:var(--muted)">TEMPO</span>
-        <div class="bpm"><span id="bpmVal">130</span><span>bpm</span></div></div>
-      <input type="range" id="tempo" min="60" max="180" value="130" step="1">
+    <div class="idb">
+      <div class="logo">RB<b>-</b>303</div>
+      <div class="bpmline"><b id="bpmVal">130</b> BPM</div>
     </div>
+    <div class="strip"><canvas id="scope"></canvas></div>
   </div>
-</div>
-
-<div class="panel">
-  <div class="panel-title" id="voiceTitle">Voice · 303</div>
-  <div class="knobs" id="knobs"></div>
-  <div class="noknob" id="noknob">ยังไม่มีปุ่มสำหรับเสียงนี้ — ปรับระดับได้ที่ Mixer</div>
-  <div class="wave" id="wave">
-    <button data-w="0" class="on">Sawtooth</button>
-    <button data-w="1">Square</button>
-  </div>
-</div>
-
-<div class="panel">
-  <div class="panel-title">Scope · wave / spectrum</div>
-  <canvas id="scope"></canvas>
-</div>
-
-<div class="panel">
-  <div class="ptitle-row">
-    <div class="panel-title">Pattern</div>
-    <div class="pbtns">
-      <button id="clrPat">Clr</button>
-      <button id="copyLink">Copy Link</button>
-      <button id="resetPat">Reset</button>
-    </div>
-  </div>
+  <input type="range" id="tempo" class="tempoline" min="60" max="180" value="130" step="1">
   <div class="tracks" id="tracks">
     <button data-t="303" class="on">303</button>
     <button data-t="BD">BD</button>
@@ -223,15 +253,37 @@
       <span class="llbl">Length</span>
       <button id="lenDn">−</button><span class="lval" id="lenVal">16</span><button id="lenUp">+</button>
     </div>
+    <button class="fold" id="foldGrid" title="ซ่อน/แสดง grid">▲</button>
   </div>
-  <div class="steprow-label">1 — 8</div>
-  <div class="steps" id="stepsA"></div>
-  <div class="steprow-label">9 — 16</div>
-  <div class="steps" id="stepsB"></div>
+  <div class="gridwrap" id="gridwrap">
+    <div class="steps" id="stepsA"></div>
+    <div class="steps" id="stepsB"></div>
+  </div>
 </div>
 
+<!-- ===== PAGES — every panel kept intact, just shown one at a time ===== -->
+<div class="page" id="page">
+  <div class="pg on" data-p="voice">
 <div class="panel">
-  <div class="panel-title">Step editor</div>
+  <div class="panel-title" id="voiceTitle">Voice · 303</div>
+  <div class="knobs" id="knobs"></div>
+  <div class="noknob" id="noknob">ยังไม่มีปุ่มสำหรับเสียงนี้ — ปรับระดับได้ที่ Mixer</div>
+  <div class="wave" id="wave">
+    <button data-w="0" class="on">Sawtooth</button>
+    <button data-w="1">Square</button>
+  </div>
+</div>
+
+  </div>
+  <div class="pg" data-p="step">
+<div class="panel">
+  <div class="ptitle-row">
+    <div class="panel-title">Step editor</div>
+    <div class="pbtns">
+      <button id="clrPat">Clr</button>
+      <button id="resetPat">Reset</button>
+    </div>
+  </div>
   <div class="editor">
     <div class="ed-head"><div class="which">editing <b id="edTrack">303</b> · step <b id="edNum">1</b></div></div>
     <div class="toggles">
@@ -248,6 +300,22 @@
   </div>
 </div>
 
+  </div>
+  <div class="pg" data-p="fx">
+<div class="panel">
+  <div class="panel-title">Delay · insert on 303</div>
+  <div class="knobs" id="fxknobs"></div>
+</div>
+
+  </div>
+  <div class="pg" data-p="mix">
+<div class="panel">
+  <div class="panel-title">Mixer</div>
+  <div class="mixer" id="mixer"></div>
+</div>
+
+  </div>
+  <div class="pg" data-p="bank">
 <div class="panel">
   <div class="panel-head">
     <div class="panel-title">Bank</div>
@@ -256,6 +324,7 @@
       <button id="slotDel">Del</button>
       <button id="bankExp">Export</button>
       <button id="bankImp">Import</button>
+      <button id="copyLink">Link</button>
     </div>
   </div>
   <div class="slots" id="slots"></div>
@@ -263,19 +332,26 @@
   <input type="file" id="bankFile" accept="application/json,.json" style="display:none">
 </div>
 
-<div class="panel">
-  <div class="panel-title">Mixer</div>
-  <div class="mixer" id="mixer"></div>
-</div>
-
+<div id="status">engine: idle · กด ▶ เพื่อเริ่ม</div>
 <div class="hint">
   <b>กรอกจากแผ่น TB-303:</b> อยู่แทร็ค 303 กด <b>TIME</b> แล้วไล่แถวล่างสุดของแผ่นให้ครบ —
   แตะวน <b>— → ● → ○</b> (rest → note → tie) ตั้ง <b>Length</b> ตามความยาว pattern ·
   จากนั้นกด <b>PITCH</b> ใส่โน้ต accent slide เฉพาะช่อง ● (ช่อง ○ ไม่มีพิตช์ของตัวเอง เหมือนเครื่องจริง) ·
   <b>กลอง</b>: แตะครั้งเดียว วนเป็น ปิด → เปิด → เปิด+accent · <b>CH ตัด OH อัตโนมัติ</b> (choke แบบ 808) ·
   <b>Accent</b> = ดัง+filter วืด · <b>Slide</b> = โน้ตผูก portamento ·
-  <b>Copy Link</b> = แชร์สถานะปัจจุบันเป็นลิงก์ · <b>Bank</b> = 8 ช่องเก็บ pattern ในเครื่อง (แตะช่อง = โหลด, Save = เก็บทับ, แตะซ้ำภายใน 5 วิ = undo) · <b>Export ไฟล์ JSON ไว้เป็นระยะ</b> เพราะ bank หายถ้าล้างข้อมูลเว็บ ·
+  <b>Copy Link</b> = แชร์สถานะปัจจุบันเป็นลิงก์ · <b>Delay</b> = เอฟเฟกต์ใส่เฉพาะเสียง 303 · sync กับ tempo อัตโนมัติ · เริ่มต้น Mix=0 (ปิด) หมุนขึ้นเพื่อเปิด · <b>Bank</b> = 8 ช่องเก็บ pattern ในเครื่อง (แตะช่อง = โหลด, Save = เก็บทับ, แตะซ้ำภายใน 5 วิ = undo) · <b>Export ไฟล์ JSON ไว้เป็นระยะ</b> เพราะ bank หายถ้าล้างข้อมูลเว็บ ·
   Scope: เส้นบน = waveform, เส้นล่าง = spectrum (ดู resonance peak วิ่งตาม envelope ได้เลย)
+</div>
+
+  </div>
+</div>
+
+<div class="tabs" id="tabs">
+  <button data-p="voice" class="on"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8"/><path d="M12 6v6"/></svg></span>VOICE</button>
+  <button data-p="step"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="9" width="4" height="6" rx="1"/><rect x="10" y="5" width="4" height="14" rx="1"/><rect x="17" y="11" width="4" height="4" rx="1"/></svg></span>STEP</button>
+  <button data-p="fx"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 12h3l2-5 3 10 3-8 2 3h5"/></svg></span>FX</button>
+  <button data-p="mix"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 4v16M12 4v16M18 4v16"/><circle cx="6" cy="9" r="2.2" fill="currentColor" stroke="none"/><circle cx="12" cy="15" r="2.2" fill="currentColor" stroke="none"/><circle cx="18" cy="7" r="2.2" fill="currentColor" stroke="none"/></svg></span>MIX</button>
+  <button data-p="bank"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg></span>BANK</button>
 </div>
 
 <script>
@@ -300,7 +376,10 @@
 const SILENT = 0.00025;
 
 const TUNING = {
-  busGain:      0.42,    // drum+303 bus headroom before the master soft-clip
+  busGain:      0.42,
+  dly:{ maxS:2.6,        // buffer length — 1/2 note at 60bpm is 2.0s
+        fbLpHz:2600,     // lowpass in the feedback loop: repeats darken like tape
+        fbDef:0.38, mixDef:0.0, fbMax:0.85 },   // ships OFF (mix 0) so nothing changes uninvited    // drum+303 bus headroom before the master soft-clip
                          // (0.42 was over-cautious; 0.50 is +1.3dB louder and the
                          //  clipper still only touches ~0.2% of samples = peaks only)
   /* envelopes (seconds) */
@@ -628,6 +707,50 @@ class DrumHat{
   }
 }
 
+/* ---------- delay ----------
+   Deliberately NOT bound to the 303: samples in, samples out. Today it is an
+   insert on the 303 (a shared master delay would put the kick into the feedback
+   loop and turn the low end to mud); tomorrow the same object can sit on a send
+   bus by moving where process() is called, with no DSP changes.
+
+   Tempo-synced. When the tempo moves the read head jumps rather than glides —
+   that is what a digital delay does, and staying in time matters more than the
+   artefact while dragging a tempo slider.
+
+   The buffer is allocated once in the constructor. Nothing is allocated in
+   process(): same iron rule as every other voice. */
+const DELAY_DIV=[1, 4/3, 2, 3, 4, 8];   // in 16th-note steps: 1/16 · 1/8T · 1/8 · dotted-1/8 · 1/4 · 1/2
+
+class Delay{
+  constructor(sr){ const T=TUNING.dly;
+    this.sr=sr;
+    this.n=Math.ceil(sr*T.maxS);           // enough for 1/2 note at the slowest tempo
+    this.buf=new Float32Array(this.n);
+    this.w=0;
+    this.dTime=sr*0.25;
+    this.fb=T.fbDef; this.mix=T.mixDef;
+    this.lp=0;
+    this.lpK=1-Math.exp(-6.283185307179586*T.fbLpHz/sr);
+  }
+  setTime(samples){ this.dTime=Math.max(2,Math.min(this.n-2,samples)); }
+  process(x){
+    const n=this.n;
+    let r=this.w-this.dTime;
+    if(r<0) r+=n;
+    const i0=r|0, frac=r-i0, i1=(i0+1)===n?0:i0+1;
+    const y=this.buf[i0]+(this.buf[i1]-this.buf[i0])*frac;   // fractional read
+    /* one-pole lowpass INSIDE the feedback loop: every repeat comes back darker
+       than the last, like tape. Also stops high frequencies accumulating into
+       harshness at long feedback settings. */
+    this.lp+=this.lpK*(y-this.lp);
+    /* tanh on the write is a safety net as much as a colour — it makes runaway
+       feedback impossible no matter what the tempo or feedback knob do. */
+    this.buf[this.w]=tanh(x+this.lp*this.fb);
+    this.w=(this.w+1)===n?0:this.w+1;
+    return x+y*this.mix;                    // additive: the dry line never thins
+  }
+}
+
 class Engine {
   constructor(sr){
     this.sr=sr;
@@ -664,6 +787,7 @@ class Engine {
     this.previewLeft=0;                            // one-shot note audition countdown
     this.onPos=null;
     /* drum section — 5 voices, one shared clock */
+    this.delay=new Delay(sr);
     this.bd=new DrumKick(sr); this.sd=new DrumSnare(sr); this.cp=new DrumClap(sr);
     this.chh=new DrumHat(sr,TUNING.hh.chDecayS);
     this.ohh=new DrumHat(sr,TUNING.hh.ohDecayS);
@@ -672,7 +796,16 @@ class Engine {
   }
   setParam(k,v){
     if(k==='len'){ this.len=Math.max(1,Math.min(16,v|0)); return; }
-    this.p[k]=v; if(k==='tempo') this.samplesPerStep=this.sr*(60/v)/4;
+    this.p[k]=v;
+    if(k==='tempo') this.samplesPerStep=this.sr*(60/v)/4;
+    if(k==='tempo'||k==='dlyTime') this.syncDelay();
+    if(k==='dlyFb')  this.delay.fb =Math.max(0,Math.min(TUNING.dly.fbMax,v));
+    if(k==='dlyMix') this.delay.mix=Math.max(0,Math.min(1,v));
+  }
+  /* delay length is derived, never stored: tempo x division */
+  syncDelay(){
+    const d=DELAY_DIV[Math.max(0,Math.min(DELAY_DIV.length-1,this.p.dlyTime|0))];
+    this.delay.setTime(this.samplesPerStep*d);
   }
   setPattern(p){ this.pattern=p; }
   setStep(i,d){ this.pattern[i]=d; }
@@ -800,7 +933,10 @@ class Engine {
       this.dcy=fo-this.dcx+T.dcBlock*this.dcy; this.dcx=fo; fo=this.dcy; /* trait #4 */
       const sig=fo*this.ampEnv;                     /* VCA after filter */
       /* 303 path: this tanh IS the Drive stage (character, intentional) */
-      const s303=tanh(sig*(1+this.smDrv*T.driveGain))*T.outGain*this.mv303;
+      /* delay is an INSERT on the 303 only — a master delay would feed the kick
+         into the feedback loop and smear the low end */
+      const dry303=tanh(sig*(1+this.smDrv*T.driveGain))*T.outGain;
+      const s303=this.delay.process(dry303)*this.mv303;
       /* every voice hits its own fader BEFORE the sum — that's the whole point:
          with sane levels the master tanh below only engages on real peaks,
          instead of squashing the whole mix on every kick. */
@@ -831,6 +967,7 @@ class Engine {
 const WORKLET_CODE = [
   'const TUNING='+JSON.stringify(TUNING)+';',
   'const SILENT='+SILENT+';',
+  'const DELAY_DIV='+JSON.stringify(DELAY_DIV)+';',
   tanh.toString(),
   midiToFreq.toString(),
   polyblep.toString(),
@@ -838,6 +975,7 @@ const WORKLET_CODE = [
   DrumSnare.toString(),
   DrumClap.toString(),
   DrumHat.toString(),
+  Delay.toString(),
   Engine.toString(),
   `class Voice303 extends AudioWorkletProcessor{
     constructor(){ super();
@@ -994,8 +1132,18 @@ const KNOBSETS={
     {key:'cpSpread',name:'Spread', min:0.004,max:0.028,def:0.010,pow:3.1,fmt:v=>(v*1000).toFixed(1)+'ms'},
   ],
 };
+/* FX lives in its own panel, not in a voice's knob set: it is one shared box
+   that a voice feeds, not a property of the voice. Same reasoning that keeps
+   send amounts separate from effect parameters when the send rack arrives. */
+const DIVNAME=['1/16','1/8T','1/8','1/8.','1/4','1/2'];
+const FXSET=[
+  {key:'dlyTime',name:'Time', min:0,max:5,def:3, quant:1, fmt:v=>DIVNAME[v]||'?'},
+  {key:'dlyFb',  name:'Fdbk', min:0,max:0.85,def:0.38, fmt:v=>Math.round(v/0.85*100)+'%'},
+  {key:'dlyMix', name:'Mix',  min:0,max:1,def:0.0,     fmt:v=>Math.round(v*100)+'%'},
+];
 const KNOBDEF={};   // key -> cfg, for hash validation across every set
 for(const t in KNOBSETS) for(const c of KNOBSETS[t]) KNOBDEF[c.key]=c;
+for(const c of FXSET) KNOBDEF[c.key]=c;
 for(const k in KNOBDEF) if(!(k in state.params)) state.params[k]=KNOBDEF[k].def;
 
 const knobsEl=document.getElementById('knobs');
@@ -1009,6 +1157,11 @@ function buildKnobs(track){
   voiceTitle.textContent='Voice · '+track;
   waveEl.style.display=(track==='303')?'':'none';
   noKnobEl.style.display=set.length?'none':'';
+  renderDials(knobsEl,set);
+}
+
+/* one dial renderer, used by the Voice panel and the FX panel alike */
+function renderDials(host,set){
   set.forEach(cfg=>{
     const wrap=document.createElement('div'); wrap.className='knob';
     wrap.innerHTML='<div class="dial"><div class="ind"></div></div><div class="name">'+cfg.name+'</div><div class="val"></div>';
@@ -1039,7 +1192,7 @@ function buildKnobs(track){
       norm=Math.max(0,Math.min(1,startN+(startY-e.clientY)/180)); render(); });
     const up=()=>dragging=false;
     dial.addEventListener('pointerup',up); dial.addEventListener('pointercancel',up);
-    knobsEl.appendChild(wrap);
+    host.appendChild(wrap);
   });
 }
 
@@ -1593,9 +1746,45 @@ document.getElementById('resetPat').onclick=()=>{
   refreshSteps(); refreshEditor(); saveHash();
 };
 
+/* ---------- app shell ----------
+   Pages are shown and hidden, never rebuilt: every panel keeps its original
+   DOM node and its original event handlers, so switching tabs cannot break
+   wiring. The scope canvas needs a resize when it becomes visible because a
+   hidden canvas has no measurable size. */
+const pages=document.querySelectorAll('.pg');
+const tabBtns=document.querySelectorAll('#tabs button');
+function setPage(name){
+  pages.forEach(p=>p.classList.toggle('on',p.dataset.p===name));
+  tabBtns.forEach(b=>b.classList.toggle('on',b.dataset.p===name));
+}
+tabBtns.forEach(b=>{ b.onclick=()=>setPage(b.dataset.p); });
+
+/* Fold the grid away when a page needs the room. Deliberately manual: the deck
+   is worth its height most of the time, and something that collapsed on its own
+   would move under your thumb mid-edit. */
+const foldBtn=document.getElementById('foldGrid');
+foldBtn.onclick=()=>{
+  const gw=document.getElementById('gridwrap');
+  gw.classList.toggle('folded');
+  foldBtn.textContent=gw.classList.contains('folded')?'▼':'▲';
+};
+
+/* Tapping a step opens the editor — but only in PITCH mode, where the next
+   thing you need is the keyboard. In TIME mode you are cycling ● ○ — across
+   all sixteen steps and a page change would fight you; same for drums, where a
+   tap is the whole edit. This only works because the grid is pinned: landing on
+   the editor still leaves every step under your thumb, so you can run a whole
+   sheet without navigating back and forth. */
+const _tapStep=tapStep;
+tapStep=function(i){
+  _tapStep(i);
+  if(state.track==='303' && state.pmode==='pitch') setPage('step');
+};
+
 /* ---------- boot ---------- */
 loadHash();          // fills state.params; knobs render from it below
 buildKnobs(state.track);
+renderDials(document.getElementById('fxknobs'),FXSET);
 buildSteps();
 readBank(); renderSlots();
 if(!storageOK) bankMsg('เบราว์เซอร์นี้ไม่ให้เก็บข้อมูลถาวร — bank อยู่แค่จนปิดหน้า ใช้ Export เก็บไฟล์แทน',true);

@@ -2,7 +2,17 @@
 // Any load-time exception (the "page dead, no sound" class) fails here.
 const fs=require('fs');
 const path=require('path');
-const APP=path.join(__dirname,'..','rb303.html');
+/* Resolve the app regardless of what it is called. The file has been renamed
+   before (rb303.html -> index.html for a shorter GitHub Pages URL) and hardcoding
+   the name broke every test at once, which is a silly way to lose a test suite. */
+const APP=(()=>{
+  for(const n of ['index.html','rb303.html','v2.html']){
+    const f=path.join(__dirname,'..',n);
+    if(fs.existsSync(f)) return f;
+  }
+  console.error('หาไฟล์แอปไม่เจอ — ต้องมี index.html หรือ rb303.html ที่รากของ repo');
+  process.exit(1);
+})();
 const html=fs.readFileSync(APP,'utf8');
 const sm=html.match(/<script>([^]*)<\/script>/);
 const cnv={fillStyle:'',strokeStyle:'',lineWidth:1,font:'',

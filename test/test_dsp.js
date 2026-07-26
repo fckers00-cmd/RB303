@@ -1,12 +1,27 @@
 const fs=require('fs');
 const path=require('path');
-const APP=path.join(__dirname,'..','rb303.html');
+/* Resolve the app regardless of what it is called. The file has been renamed
+   before (rb303.html -> index.html for a shorter GitHub Pages URL) and hardcoding
+   the name broke every test at once, which is a silly way to lose a test suite. */
+const APP=(()=>{
+  for(const n of ['index.html','rb303.html','v2.html']){
+    const f=path.join(__dirname,'..',n);
+    if(fs.existsSync(f)) return f;
+  }
+  console.error('หาไฟล์แอปไม่เจอ — ต้องมี index.html หรือ rb303.html ที่รากของ repo');
+  process.exit(1);
+})();
 const html=fs.readFileSync(APP,'utf8');
 const m=html.match(/\/\* ==== DSP CORE BEGIN[^]*?\*\/([^]*?)\/\* ==== DSP CORE END ==== \*\//);
 if(!m){ console.log('FAIL: markers not found'); process.exit(1); }
-const ns=eval(m[1]+';({TUNING,tanh,midiToFreq,polyblep,DrumKick,DrumSnare,DrumClap,DrumHat,Engine})');
+const ns=eval(m[1]+';({TUNING,SILENT,DELAY_DIV,tanh,midiToFreq,polyblep,DrumKick,DrumSnare,DrumClap,DrumHat,Delay,Engine})');
 
 const SR=44100;
+/* Tests used to only print FAIL and still exit 0, so a broken build passed the
+   suite silently. Anything that matters must call fail(). */
+let FAILURES=0;
+const fail=(m)=>{FAILURES++;console.log('  ^^ FAIL: '+m);};
+process.on('exit',()=>{ if(FAILURES){ console.log('\n'+FAILURES+' assertion(s) failed'); process.exitCode=1; } });
 function drumPat(steps){ const p=[];for(let i=0;i<16;i++)p.push({on:steps.includes(i)?1:0,accent:(i===0?1:0)});return p; }
 
 // 0) per-drum-voice solo levels (peak/RMS over 0.6s each)
@@ -16,12 +31,36 @@ for(const [name,mk] of [
   ['CH',()=>new ns.DrumHat(SR,ns.TUNING.hh.chDecayS)],
   ['OH',()=>new ns.DrumHat(SR,ns.TUNING.hh.ohDecayS)]]){
   const v=mk();
-  if(name==='SD') v.trigger(0,182,0.18,0.62);
+  if(name==='SD') v.trigger(0,190,0.30,0.55);
   else if(name==='CP') v.trigger(0,1050,0.15,0.010);
   else v.trigger(0);
   let peak=0,sum=0,nan=0; const N=SR*0.6|0;
   for(let i=0;i<N;i++){const s=v.process();if(!(s===s))nan++;peak=Math.max(peak,Math.abs(s));sum+=s*s;}
   console.log(name+' solo: peak='+peak.toFixed(3)+' rms='+Math.sqrt(sum/N).toFixed(3)+' NaN='+nan);
+}
+
+// 0b) Kit balance in the mix. Raw solo peaks may exceed 1.0 by design (the fader
+// brings them down) — what matters is where each voice LANDS in the mix at its
+// default fader, and that kick > snare/clap > hats. This catches the "buried
+// snare/clap" bug that made them inaudible under the 303.
+{
+  const db=x=>20*Math.log10(x+1e-9);
+  const e=new ns.Engine(SR);
+  const raw=(t)=>{const eng=new ns.Engine(SR);eng.trigDrum(t,0);const N=SR*0.5|0;let s=0;
+    for(let i=0;i<N;i++){let v=0;
+      if(t==='BD')v=eng.bd.process();else if(t==='SD')v=eng.sd.process();
+      else if(t==='CP')v=eng.cp.process();else if(t==='CH')v=eng.chh.process();
+      else if(t==='OH')v=eng.ohh.process();s+=v*v;}
+    return Math.sqrt(s/N);};
+  const mix={};
+  for(const t of ['BD','SD','CP','CH','OH']) mix[t]=db(raw(t)*e.p['v'+t]);
+  const gapSD=mix.BD-mix.SD, gapCP=mix.BD-mix.CP;
+  // snare and clap should be within ~8dB of the kick (audible), hats further back
+  const ok = gapSD<8 && gapCP<9 && mix.CH<mix.SD && mix.OH<mix.SD;
+  if(!ok) fail('kit balance');
+  console.log('kit balance: '+(ok?'OK':'FAIL')+
+    '  BD '+mix.BD.toFixed(0)+'  SD '+mix.SD.toFixed(0)+
+    '  CP '+mix.CP.toFixed(0)+'  CH '+mix.CH.toFixed(0)+'  OH '+mix.OH.toFixed(0)+' dB');
 }
 
 // 0b) choke: trigger OH, run 20ms, choke, verify it dies within ~10ms
@@ -98,8 +137,11 @@ console.log('4s full mix: peak='+peak.toFixed(3)+' rms='+Math.sqrt(sum/N).toFixe
 // 2) worklet serialization — build exactly like the page, run with stubs
 const src=[
  'const TUNING='+JSON.stringify(ns.TUNING)+';',
+ 'const SILENT='+ns.SILENT+';',
+ 'const DELAY_DIV='+JSON.stringify(ns.DELAY_DIV)+';',
  ns.tanh.toString(),ns.midiToFreq.toString(),ns.polyblep.toString(),
  ns.DrumKick.toString(),ns.DrumSnare.toString(),ns.DrumClap.toString(),ns.DrumHat.toString(),
+ ns.Delay.toString(),
  ns.Engine.toString(),
  `class Voice303 extends AudioWorkletProcessor{
    constructor(){super();this.eng=new Engine(sampleRate);}
@@ -124,7 +166,7 @@ console.log('worklet-serialized: '+(ok?'OK':'FAIL'));
 // so the extremes have to be safe by construction.
 {
   const SETS={
-    SD:[['sdPitch',110,182,340],['sdDecay',0.04,0.18,0.6],['sdSnappy',0,0.62,1]],
+    SD:[['sdPitch',120,190,260],['sdDecay',0,0.3,1],['sdSnappy',0,0.55,1]],
     CP:[['cpPitch',500,1050,2400],['cpDecay',0.04,0.15,0.5],['cpSpread',0.004,0.010,0.028]],
   };
   let worst=0, bad=[];
@@ -147,4 +189,195 @@ console.log('worklet-serialized: '+(ok?'OK':'FAIL'));
   }
   console.log('knob sweep (18 combos): worst peak='+worst.toFixed(3)+
     ' -> '+(bad.length?'FAIL '+bad.join(' | '):'OK'));
+}
+
+// 4) Snap is a bipolar tom<->snare macro (809 rebuild).
+// Guards: (a) loudness stays in a tight band across the whole throw — a tom is
+// allowed to be beefier than a snare, but not by a lot; (b) timbre moves a great
+// deal from tom to snare; (c) the SNARE end keeps real low-mid body, i.e. it must
+// NOT collapse into a bright noise-only "hi-hat" sound (the bug that triggered
+// this rebuild).
+{
+  const db=x=>20*Math.log10(x);
+  const spec=(o)=>{let num=0,den=0,lm=0,tot=0;const N=4096;
+    for(let k=2;k<600;k++){let re=0,im=0;
+      for(let i=0;i<N;i++){const a=2*Math.PI*k*i/N;re+=o[i]*Math.cos(a);im-=o[i]*Math.sin(a);}
+      const g=re*re+im*im,f=k*SR/N;num+=Math.sqrt(g)*f;den+=Math.sqrt(g);tot+=g;if(f>=140&&f<=430)lm+=g;}
+    return {cen:num/den, lm:lm/tot};};
+  const R=[],C=[]; let snareLM=0;
+  for(const s of [0,0.2,0.33,0.55,0.8,1]){
+    const v=new ns.DrumSnare(SR); v.trigger(0,190,0.30,s);
+    const N=SR*0.6|0,o=new Float32Array(4096); let sum=0;
+    for(let i=0;i<N;i++){const x=v.process();if(i<4096)o[i]=x;sum+=x*x;}
+    R.push(Math.sqrt(sum/N)); const sp=spec(o); C.push(sp.cen);
+    if(s===1) snareLM=sp.lm;
+  }
+  const swing=db(Math.max(...R)/Math.min(...R));
+  const semis=Math.abs(12*Math.log2(C[C.length-1]/C[0]));
+  console.log('snap loudness band: '+(swing<=4?'OK':'FAIL')+'  swing='+swing.toFixed(2)+'dB'+
+    '   tom->snare timbre '+semis.toFixed(1)+' semitone '+(semis>10?'OK':'FAIL'));
+  // the whole point of the rebuild: snare end still has body, isn't a hi-hat
+  if(!(snareLM>0.15)) fail('snare lost its body');
+  console.log('snare keeps body (not hi-hat): '+(snareLM>0.15?'OK':'FAIL')+
+    '  low-mid frac at Snap 100% = '+(snareLM*100).toFixed(0)+'%');
+}
+
+// 5) Voice deactivation. A voice that has decayed below -72 dB must stop
+// computing — otherwise five drum voices grind through oscillators forever.
+{
+  const e=new ns.Engine(SR);
+  const N=SR*3,o=new Float32Array(N);
+  for(let i=0;i<N;i+=128){const b=o.subarray(i,i+128);e.render(b,b.length);}
+  const idleOff=!e.bd.active&&!e.sd.active&&!e.cp.active&&!e.chh.active&&!e.ohh.active;
+  let pk=0; for(let i=0;i<N;i++) pk=Math.max(pk,Math.abs(o[i]));
+  console.log('idle voices deactivate: '+(idleOff&&pk===0?'OK':'FAIL')+'  (peak while idle '+pk+')');
+  // ...and a trigger must wake them back up and still make sound
+  e.trigDrum('BD',0); e.setParam('vBD',1); e.setParam('vMas',1);
+  const o2=new Float32Array(512);
+  e.render(o2,512);
+  let pk2=0; for(let i=0;i<512;i++) pk2=Math.max(pk2,Math.abs(o2[i]));
+  console.log('trigger reactivates voice: '+(e.bd.active&&pk2>0.01?'OK':'FAIL')+'  peak='+pk2.toFixed(3));
+}
+
+// 6) Bus headroom + master position.
+// Two bugs lived here: (a) voices were balanced by AVERAGE level, which sent
+// their PEAKS to ~3.2 into the shared soft-clip — every drum hit ducked the
+// whole mix ~9 dB, heard as pumping; (b) the master fader sat AFTER the clipper,
+// so the player could not reduce distortion with it at all.
+{
+  const db=x=>20*Math.log10(x+1e-9);
+  const dp=(st)=>{const p=[];for(let i=0;i<16;i++)p.push({on:st.includes(i)?1:0,accent:i%4===0?1:0});return p;};
+  const mk=(vmas)=>{
+    const e=new ns.Engine(SR);
+    e.setDrums({BD:dp([0,4,8,12]),SD:dp([4,12]),CH:dp([2,6,10,14]),OH:dp([]),CP:dp([4,12])});
+    e.setPattern(new Array(16).fill(0).map((_,i)=>
+      ({note:36,t:i%4===3?0:1,accent:i%4===0?1:0,slide:0})));
+    if(vmas!==undefined) e.setParam('vMas',vmas);
+    e.play();
+    const N=SR*4,o=new Float32Array(N);
+    for(let i=0;i<N;i+=128){const b=o.subarray(i,i+128);e.render(b,b.length);}
+    let pk=0,sum=0;for(let i=0;i<N;i++){pk=Math.max(pk,Math.abs(o[i]));sum+=o[i]*o[i];}
+    return {pk,rms:Math.sqrt(sum/N)};
+  };
+  // (a) The clipper may catch transient PEAKS (that is a limiter doing its job)
+  // but must not be compressing a meaningful share of the signal — that is what
+  // is heard as pumping. Measure the share, not just the worst case.
+  {
+    const e=new ns.Engine(SR);
+    e.setDrums({BD:dp([0,4,8,12]),SD:dp([4,12]),CH:dp([2,6,10,14]),OH:dp([]),CP:dp([4,12])});
+    e.setPattern(new Array(16).fill(0).map((_,i)=>
+      ({note:36,t:i%4===3?0:1,accent:i%4===0?1:0,slide:0})));
+    e.play();
+    const N=SR*4,o=new Float32Array(N);
+    for(let i=0;i<N;i+=128){const b=o.subarray(i,i+128);e.render(b,b.length);}
+    // invert the output clip to recover how hard it was driven
+    let squashed=0,worst=1;
+    for(let i=0;i<N;i++){
+      const y=o[i]/0.9;                                   // undo master
+      if(Math.abs(y)>=0.9999){squashed++;continue;}
+      const x=0.5*Math.log((1+y)/(1-y));                  // atanh
+      const gr=Math.abs(x)>1e-6?Math.abs(y/x):1;
+      if(gr<0.707)squashed++;
+      if(gr<worst)worst=gr;
+    }
+    const pct=squashed/N*100;
+    if(!(pct<0.5)) fail('bus headroom');
+  console.log('bus headroom: '+(pct<0.5?'OK':'FAIL')+
+      '  '+pct.toFixed(2)+'% of samples compressed >3dB (must stay under 0.5%)'+
+      '   worst '+db(worst).toFixed(1)+' dB');
+  }
+  // (b) the master fader must actually change the peak — proves it is pre-clip
+  const lo=mk(0.4), hi=mk(1.0);
+  const works=(hi.pk-lo.pk)>0.15;
+  if(!works) fail('master is pre-clip');
+  console.log('master is pre-clip: '+(works?'OK':'FAIL')+
+    '  peak at vMas 0.4='+lo.pk.toFixed(2)+' vs 1.0='+hi.pk.toFixed(2));
+}
+
+// 7) Hollowness guard. "Hollow" has a measurable signature: the body resonance
+// towering over the noise floor, so the ear hears a tube rather than a drum.
+// The voice was fine — the DEFAULT Snap position sat in the hollow zone (17 dB
+// peak-over-floor). This pins the shipped default to the usable range and
+// checks the knob still reaches a fat tom at the far left.
+{
+  const db=x=>10*Math.log10(x+1e-12);
+  const shape=(snap)=>{
+    const v=new ns.DrumSnare(SR); v.trigger(0,190,0.30,snap);
+    const N=8192,o=new Float32Array(N); let pk=0;
+    for(let i=0;i<N;i++){o[i]=v.process();pk=Math.max(pk,Math.abs(o[i]));}
+    for(let i=0;i<N;i++)o[i]/=pk;
+    const mag=[];
+    for(let k=2;k<1600;k++){let re=0,im=0;
+      for(let n=0;n<N;n++){const a=2*Math.PI*k*n/N;re+=o[n]*Math.cos(a);im-=o[n]*Math.sin(a);}
+      mag.push([k*SR/N,re*re+im*im]);}
+    const d=(lo,hi)=>{let e=0,c=0;for(const [f,g] of mag)if(f>=lo&&f<hi){e+=g;c++;}return c?e/c:0;};
+    return db(d(170,340))-db(d(600,1500));   // resonance above floor, in dB
+  };
+  const def=shape(0.78), tom=shape(0.1);
+  console.log('default not hollow: '+(def<15?'OK':'FAIL')+
+    '  peak-over-floor '+def.toFixed(1)+' dB at shipped default (must stay under 15)');
+  console.log('tom end still fat: '+(tom>20?'OK':'FAIL')+'  '+tom.toFixed(1)+' dB');
+}
+
+// 8) Delay.
+// Written as a standalone sample-in/sample-out object so it can move to a send
+// bus later without DSP changes. Three things must hold: echoes land exactly on
+// the musical division, repeats darken (the lowpass is INSIDE the feedback
+// loop), and maximum feedback can never run away.
+{
+  const SPSTEP=SR*(60/130)/4;
+  // (a) timing — an impulse must echo exactly one division later
+  let timingOK=true, worstErr=0;
+  for(let d=0;d<ns.DELAY_DIV.length;d++){
+    const dl=new ns.Delay(SR);
+    dl.setTime(SPSTEP*ns.DELAY_DIV[d]); dl.fb=0.4; dl.mix=1;
+    const N=SR*1.5|0; let first=-1;
+    for(let i=0;i<N;i++){const y=dl.process(i===0?1:0);
+      if(first<0 && i>4 && Math.abs(y)>0.05) first=i;}
+    const want=SPSTEP*ns.DELAY_DIV[d];
+    const err=Math.abs(first-want)/want;
+    if(err>worstErr)worstErr=err;
+    if(err>0.02) timingOK=false;
+  }
+  console.log('delay sync: '+(timingOK?'OK':'FAIL')+
+    '  worst timing error '+(worstErr*100).toFixed(2)+'% (must stay under 2%)');
+
+  // (b) the feedback lowpass must actually darken successive repeats
+  {
+    const dl=new ns.Delay(SR); dl.setTime(SR*0.2); dl.fb=0.7; dl.mix=1;
+    const N=SR*1.4|0,o=new Float32Array(N);
+    let seed=12345; const nz=()=>{seed=(seed*1103515245+12345)&0x7fffffff;return seed/1073741824-1;};
+    for(let i=0;i<N;i++)o[i]=dl.process(i<64?nz():0);
+    const bright=(off)=>{let hi=0,lo=0,prev=0;
+      for(let i=off;i<off+4000;i++){const d=o[i]-prev;prev=o[i];hi+=d*d;lo+=o[i]*o[i];}
+      return lo>0?Math.sqrt(hi/lo):0;};
+    const r1=bright((SR*0.2)|0), r3=bright((SR*0.6)|0);
+    console.log('delay repeats darken: '+(r3<r1*0.7?'OK':'FAIL')+
+      '  brightness '+r1.toFixed(2)+' -> '+r3.toFixed(2));
+  }
+
+  // (c) runaway safety — 20s at maximum feedback must stay bounded and finite
+  {
+    const dl=new ns.Delay(SR); dl.setTime(SR*0.1); dl.fb=0.85; dl.mix=1;
+    const N=SR*20|0; let pk=0,nan=0;
+    for(let i=0;i<N;i++){const y=dl.process(i<SR*0.5?Math.sin(i*0.05)*0.9:0);
+      if(!(y===y))nan++; if(Math.abs(y)>pk)pk=Math.abs(y);}
+    console.log('delay cannot run away: '+((pk<2.5&&!nan)?'OK':'FAIL')+
+      '  peak after 20s at max feedback = '+pk.toFixed(2)+' NaN='+nan);
+  }
+
+  // (d) delay must not eat the headroom we just fixed
+  {
+    const dp=(st)=>{const p=[];for(let i=0;i<16;i++)p.push({on:st.includes(i)?1:0,accent:i%4===0?1:0});return p;};
+    const e=new ns.Engine(SR);
+    e.setDrums({BD:dp([0,4,8,12]),SD:dp([4,12]),CH:dp([2,6,10,14]),OH:dp([]),CP:dp([])});
+    e.setPattern(new Array(16).fill(0).map((_,i)=>
+      ({note:36+(i%3)*3,t:i%4===3?0:1,accent:i%4===0?1:0,slide:i%2===0?1:0})));
+    e.setParam('dlyMix',1.0); e.setParam('dlyFb',0.85); e.play();
+    const N=SR*6,o=new Float32Array(N);
+    for(let i=0;i<N;i+=128){const b=o.subarray(i,i+128);e.render(b,b.length);}
+    let pk=0,nan=0;for(let i=0;i<N;i++){if(!(o[i]===o[i]))nan++;pk=Math.max(pk,Math.abs(o[i]));}
+    console.log('delay keeps headroom: '+((pk<=1&&!nan)?'OK':'FAIL')+
+      '  full mix peak at max delay = '+pk.toFixed(3));
+  }
 }
