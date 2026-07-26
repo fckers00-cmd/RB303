@@ -41,7 +41,8 @@ function boot(store){
   global.FileReader=function(){};
   if(store) global.localStorage=store; else delete global.localStorage;
   const api=eval(sm+'\n;({seqSnapshot,sndSnapshot,applySeq,applySnd,snapshot,'+
-    'readBank,writeBank,renderSlots,state,BANK_KEY,SLOT_COUNT})');
+    'readBank,writeBank,renderSlots,state,BANK_KEY,SLOT_COUNT,KNOBDEF,'+
+    'setCtl:(c)=>{ctl=c;}, setStarted:(b)=>{started=b;}, setBooted:(b)=>{booted=b;}})');
   return {api,els};
 }
 
@@ -134,6 +135,34 @@ const ok=(name,cond,extra)=>{ console.log((cond?'OK   ':'FAIL ')+name+(cond?'':'
   const {api}=boot(memStore());
   api.applySeq({ s:new Array(16).fill(0).map((_,i)=>[36,i%2?1:0,0,0]), d:{}, l:16 }, true);
   ok('legacy import makes no ties', api.state.pattern.every(x=>x.t!==2));
+}
+
+// 8) loading a patch must reach the engine WHOLE, not just the visible track.
+//    buildKnobs only pushes the dials it drew — one track's worth, and never the
+//    FX panel. Left at that, loading a bank slot while sitting on a drum track
+//    kept the 303 on the previous patch's filter: the grid filled in, the sound
+//    did not change. Silent to look at, obvious to hear.
+{
+  for(const track of ['303','BD','CH','SD','CP']){
+    const {api}=boot(memStore());
+    api.setBooted(true);
+    api.state.track=track;
+    /* a patch that differs from the defaults in every knob the engine has */
+    const patch={};
+    for(const k in api.KNOBDEF){
+      const c=api.KNOBDEF[k];
+      let v=c.min+(c.max-c.min)*0.73;
+      if(c.quant) v=Math.round(v/c.quant)*c.quant;
+      patch[k]=v;
+    }
+    const got={};
+    api.setCtl({ setParam:(k,v)=>{got[k]=v;}, setPattern(){}, setDrums(){} });
+    api.setStarted(true);
+    api.applySnd({ k:patch });
+    const missing=Object.keys(api.KNOBDEF).filter(k=>!(k in got));
+    ok('patch reaches engine whole (track '+track+')', missing.length===0,
+       'ไม่ถูกส่ง: '+missing.join(','));
+  }
 }
 
 console.log(fails? '\n'+fails+' รายการไม่ผ่าน' : '\nbank: ผ่านทั้งหมด');

@@ -1673,6 +1673,13 @@ function applySnd(n){
     if(c && isFinite(v)) state.params[key]=Math.max(c.min,Math.min(c.max,v));
   }
   if(booted) buildKnobs(state.track);          // re-render dials from new values
+  /* buildKnobs only pushes the knobs it just drew — one track's worth, and the
+     FX panel never. Loading a patch has to reach the engine whole, otherwise the
+     voices you cannot see keep the previous patch's sound: load a bright patch
+     while sitting on a drum track and the 303 stays on the old closed filter,
+     which reads as "the pattern loaded but there is no sound". Push every knob,
+     same list initAudio pushes on start. */
+  if(started&&ctl) for(const key in KNOBDEF) ctl.setParam(key,state.params[key]);
   if(n.m) for(const key in n.m){ if(mixCtl[key]) mixCtl[key].set(+n.m[key]); }
 }
 
