@@ -15,12 +15,9 @@ Target: **"acid box จอเดียว"** = 303 หนึ่งตัว + �
 
 หลักที่ใช้ตลอด: **"ออกแบบเผื่อ ไม่สร้างเผื่อ"** — Engine เป็น class แยกต่อ voice, ctl interface กลาง, knob set แยกต่อแทร็ค → เติมทีหลังได้โดยไม่รื้อ
 
-### วิธีทำงานที่ตกลงกันแล้ว
-
-- **วัดก่อนเชื่อ** — ทุกข้อสรุปเรื่องเสียงต้องมีตัวเลข ไม่ใช่ความรู้สึกหรือกฎที่ท่องมา
-- **ทำทีละอย่าง** ให้ผู้ใช้ฟังก่อนค่อยไปต่อ — เคยพลาดเพราะรวบหลายเรื่องมาส่งทีเดียวจนวิจารณ์ไม่ได้
-- **อย่าขยับเป้าให้ตรงลูกศร** — เคยแก้ค่า TUNING เพื่อให้เทสต์ที่เขียนเองผ่าน ซึ่งผิด
-- ผู้ใช้ชอบภาษาตรงไปตรงมา ไม่ต้องเชียร์ · ให้ทักท้วงเมื่อไม่เห็นด้วย
+### วิธีทำงาน
+อยู่ใน **Project instructions** แล้ว (กฎเหล็ก · วิธีวัดเสียงให้ถูก · สัญญาณจากผู้ใช้ · ข้อจำกัดของผู้ใช้)
+ไฟล์นี้เก็บเฉพาะ **สถานะทางเทคนิค** ไม่ซ้ำกับ instructions
 
 ---
 
@@ -38,12 +35,27 @@ Target: **"acid box จอเดียว"** = 303 หนึ่งตัว + �
 - Choke CH→OH · **วัดแล้วไม่ click ที่ 2ms** (ดู §6)
 - **Knob เฉพาะ SD กับ CP** — BD/CH/OH ยังไม่มี (ตั้งใจ รอผลจากหูก่อน)
 
-### UI
-- Track selector `[303·BD·SD·CH·OH·CP]` — เปลี่ยนทั้ง step grid **และ panel Voice** พร้อมกัน (จงใจไม่ทำแท็บแยก ดู §7)
-- ปุ่ม `[PITCH | TIME]` + Length (โผล่เฉพาะแทร็ค 303)
-- **Mixer** fader ต่อ voice 6 ตัว + master — อยู่ **ท้ายสุด** ของหน้า (เป็นของตั้งแล้วทิ้ง ไม่ควรคั่นกลาง)
-- ปุ่ม **Clr** ต่อแทร็ค + undo ในตัวปุ่ม 5 วินาที (ไม่มี confirm dialog โดยเจตนา — ล้างกริดเป็นงานที่ทำบ่อยตอนกรอกแผ่นใหม่)
-- Scope: waveform + spectrum log 40Hz–12kHz
+### Delay (เสร็จ)
+- **insert บนสาย 303 เท่านั้น** (ไม่ใช่ master — kick เข้า feedback loop จะทำให้ย่านต่ำเละ)
+- **sync กับ tempo** 6 division: 1/16 · 1/8T · 1/8 · 1/8. · 1/4 · 1/2 · เปลี่ยน tempo แล้วหัวอ่านกระโดด (ตกลงกันแล้ว — ตรงจังหวะสำคัญกว่า artefact ตอนลาก slider)
+- **one-pole LP ใน feedback loop** → เสียงย้ำมืดลงเรื่อยๆ แบบเทป (วัดได้ 1.42 → 0.37)
+- **tanh ตอนเขียนลง buffer** = กัน runaway ถาวร (เทสต์ 20 วิที่ fb สูงสุด peak 1.73 ไม่ NaN)
+- อยู่ใน **panel แยก** ไม่ใช่ knob set ของ voice — เพราะเป็นกล่องกลางที่ voice ป้อนเข้า ไม่ใช่คุณสมบัติของ voice (เหตุผลเดียวกับที่ send amount ต้องแยกจาก effect param ตอนทำ send rack)
+- ship มาที่ **Mix = 0 (ปิด)** เพื่อไม่ให้เสียงเปลี่ยนโดยไม่ได้ขอ
+- เขียนเป็นคลาส **sample เข้า/ออก ไม่ผูกกับ 303** → ย้ายไป send bus ได้โดยไม่แตะ DSP แค่ย้ายจุดเรียก `process()`
+
+### UI — app shell (โครงใหม่)
+**3 ส่วน**: `deck` ปักหมุดบน → `page` เลื่อนได้ตรงกลาง → `tabs` ล่างจอ
+- **deck ไม่หายไปไหน**: transport · track selector · PITCH/TIME + Length · step grid
+  เหตุผลเดียวกับฮาร์ดแวร์ — ปุ่ม trig อยู่ใต้มือเสมอไม่ว่าจะเปิดหน้าไหน · หมุน knob แล้วยังเห็น playhead วิ่ง
+- **5 แท็บ**: VOICE · STEP · FX · MIX · BANK (ล่างจอ = นิ้วโป้งถึง)
+- **ปุ่ม ▲ พับ grid** เมื่อหน้าล่างต้องการที่ · จงใจให้กดเอง ไม่พับอัตโนมัติ (ไม่งั้นของขยับใต้นิ้วกลางทาง)
+- **แตะ step แล้วเด้งไป STEP อัตโนมัติ เฉพาะ PITCH mode** — TIME mode กับกลองไม่เด้ง เพราะกำลังไล่แตะรัวๆ
+  ทำได้เพราะ grid ปักหมุด: ไปหน้า editor แล้วยังแตะ step ต่อได้เลย กรอกทั้งแผ่นโดยไม่ต้องสลับหน้าไปมา
+
+**วิธี refactor ที่ใช้ (ความเสี่ยงต่ำ)**: **ย้าย DOM node เดิมทั้งก้อน ไม่ rebuild** — ทุก element คง id เดิม ทุก handler เดิมยังผูกอยู่ · หน้าใช้ show/hide ไม่ใช่สร้างใหม่
+⚠️ canvas ที่ถูกซ่อนอยู่วัดขนาดไม่ได้ → ต้อง `sizeScope()` ตอนเปิดหน้า voice
+⚠️ `ui_test.js` ตรวจว่า id ที่ JS เรียกมีครบไม่ซ้ำ, deck มีของครบ, page/tab ตรงกัน, ไม่มี panel หาย
 
 ### Save/Share
 - **URL hash** `#p=` + base64(JSON) อัตโนมัติ (debounce 250ms, `history.replaceState`) — สำหรับแชร์ทีละ pattern
@@ -62,6 +74,7 @@ Target: **"acid box จอเดียว"** = 303 หนึ่งตัว + �
   ตอนนี้โหลดพร้อมกันเสมอ ใช้งานไม่ต่างจากรวมเป็นก้อนเดียว **แต่ song mode จะไล่เฉพาะ `seq` โดยล็อก `snd` ไว้**
   ไม่งั้นเปลี่ยนท่อนทีเสียงกระโดดทั้งชุด · **automation จะไปเกาะ `seq`** เพราะการหมุนปุ่มตามจังหวะเป็นส่วนหนึ่งของการเล่น
   ⚠️ `bank_test.js` มีเทสต์คุมไม่ให้สองกล่องนี้รั่วใส่กัน — ถ้าพังคือ song mode ทำไม่ได้
+- **`renderDials(host,set)`** — ตัวเรนเดอร์ knob ตัวเดียว ใช้ได้ทั้ง Voice panel และ FX panel (เพิ่ม panel ใหม่ไม่ต้องเขียน knob ใหม่)
 - **ctl interface** (จุดต่อ UI ↔ engine ทั้งสองโหมด):
   `setParam(k,v) / setPattern(p) / setStep(i,d) / setDrums(d) / setDrumStep(t,i,d) / previewDrum(t) / preview(note) / play() / stop()`
 - เส้นเสียง: Engine → **AnalyserNode** → destination · voice ใหม่ต้อง sum เข้าจุดเดียวกันนี้
@@ -274,6 +287,33 @@ centroid ที่ Snappy 0% ไล่ 278Hz → 616Hz ตามพิตช์ 
 
 ---
 
+## 6.5) ทางที่ลองแล้วไม่เวิร์ก — อย่าเสียเวลาซ้ำ
+
+| ลอง | ผล | บทเรียน |
+|---|---|---|
+| เพิ่ม saturation แก้ snare กลวง | **แย่ลง** 17.4→20 dB | sat กดหัวเสียงและดันหางขึ้น = กลวงกว่าเดิม |
+| ลด body decay ครึ่งหนึ่ง | ดีขึ้นแค่ 0.6 dB | ไม่ใช่ lever |
+| เพิ่ม body เป็น 4-5 modes (membrane ratios) | ไม่ช่วย | โหมดทั้งหมดอยู่ย่านเดียวกัน ไม่ได้อุดช่องไหน |
+| เปลี่ยน smoothstep → power curve | ดีขึ้นแค่ 0.9 dB | mapping ไม่ใช่ตัวหลัก body/noise gain ต่างหาก |
+| coupled diode ladder แท้ (filter 303) | over-damped ไม่ scream | จึงใช้ hybrid TPT + 4 traits แทน |
+| หด Spread ให้แคบลงเพื่อให้ clap กรอบ | **กลับด้าน** burst ซ้อนกันเป็นก้อนยาว | ตัวคุมความกรอบคือ **tailDecay floor** ไม่ใช่ spread |
+| quadrature formula สำหรับชดเชยระดับ | พลาด 5.6 dB | แต่ละส่วนมี decay ต่างกัน ต้อง **fit จากที่วัดจริง** |
+| ย้าย default Snap หนี "โซนกลวง" | ผู้ใช้หมุนกลับมาโซนเดิม | **metric ขัดกับหูผู้ใช้ = metric ผิด** ตัวที่แก้จริงคือ master clip |
+
+**บั๊กที่เทสต์จับไม่ได้ 1 ตัว — เทสต์เองนั่นแหละที่พัง**
+ไฟล์เทสต์ทั้ง 5 hardcode ชื่อ `rb303.html` · พอเปลี่ยนแอปเป็น `index.html` เทสต์พังหมดทั้งชุดพร้อมกัน
+โลคอลไม่เจอเพราะไฟล์ยังชื่อเก่า — **Codex เจอตอนรันในสภาพจริง**
+แก้แล้ว: เทสต์ไล่หา `index.html` → `rb303.html` → `v2.html` เอง · `run.sh` เช็คไฟล์ครบก่อนรัน
+→ **บทเรียน: เวลาบอกให้เปลี่ยนชื่อไฟล์ ต้องไล่ดูว่าใครอ้างชื่อนั้นอยู่บ้าง**
+
+**บั๊กที่เคยเจอ 3 ตัว — เทสต์จับได้ทั้งหมด**
+1. `let` ถูกเรียกก่อนประกาศ (TDZ) → หน้าตายเงียบ
+2. method ซ้ำค้างนอก class หลังแก้ → SyntaxError หน้าตาย
+3. `const SILENT` ไม่ถูกแทรกเพราะ pattern ไม่ match → ReferenceError
+→ **`smoke.js` จับได้ทั้ง 3 ครั้ง นี่คือเหตุผลที่มันมีอยู่**
+
+---
+
 ## 7) คิวงาน
 
 ### ✅ เสร็จแล้ว — 4 ชิ้นในคิวเดิม (ทำพร้อมกันรอบเดียว)
@@ -288,10 +328,12 @@ centroid ที่ Snappy 0% ไล่ 278Hz → 616Hz ตามพิตช์ 
 
 ### ถัดไป
 5. **P-locks** — ตกลงกันแล้วว่าจะทำ (ดู §7.5)
-6. **Delay** — ตกลงแล้วว่า **insert บน 303** (ไม่ใช่ master เพราะ kick เข้า feedback loop จะกองเป็นโคลน) · **ใส่ one-pole LP ใน feedback loop** (เสียงย้ำทึบลงเรื่อยๆ แบบ dub) · **sync กับ clock แล้วปล่อยให้กระโดดตอนเปลี่ยน BPM**
+6. ~~Delay~~ ✅ เสร็จแล้ว — ตกลงแล้วว่า **insert บน 303** (ไม่ใช่ master เพราะ kick เข้า feedback loop จะกองเป็นโคลน) · **ใส่ one-pole LP ใน feedback loop** (เสียงย้ำทึบลงเรื่อยๆ แบบ dub) · **sync กับ clock แล้วปล่อยให้กระโดดตอนเปลี่ยน BPM**
    → เขียนเป็นคลาสรับ sample เข้า/คืน sample ออก **ไม่ผูกกับ 303** เผื่ออัปเป็น send bus ทีหลัง
    → จอง `Float32Array` ใน constructor ขนาด max delay (ห้าม allocate ใน loop)
-6. **Mute ต่อแทร็ค** — gain 0/1 ต่อ voice ก่อน sum
+7. **Send rack** (คุยไว้แล้ว): ปุ่ม send อยู่ข้าง mixer · **กล่อง effect แยกเป็น section ของตัวเอง** ไม่ยัดใน mixer (send amount = ต่อ voice, effect param = ตัวเดียวใช้ร่วม) · เก็บใน `snd` ทั้งคู่ ไม่ให้กระโดดตอนเปลี่ยน pattern
+   → **reverb คืองานใหญ่จริง** (comb+allpass) และเป็นตัวที่จะให้ "ห้อง" กับ clap · delay ที่มีอยู่ย้ายเข้า rack ได้เลย
+8. **Mute ต่อแทร็ค** — gain 0/1 ต่อ voice ก่อน sum · **แต่ผู้ใช้ใช้ mixer fader ลากซ้ายสุดแทนอยู่แล้ว** อาจไม่จำเป็นเท่าที่คิด
 
 ## 7.5) P-locks — ออกแบบไว้แล้ว รอลงมือ
 
@@ -359,8 +401,12 @@ freq = baseHz * Math.pow(2, curved*rangeSemitones/12);
 
 deploy แล้วที่ **https://fckers00-cmd.github.io/RB303/** (GitHub Pages · https จริง → ได้ AudioWorklet ไม่ใช่ fallback)
 
-**patch อ้างอิงที่ผู้ใช้ตั้งเอง** — เก็บไว้ใช้เทียบก่อน/หลังทุกครั้งที่แก้เสียง
-งานที่ตัดสินด้วยหูต้อง A/B ได้ ไม่งั้นจะรู้แค่ว่า "เปลี่ยนไป" แต่ไม่รู้ว่า "ดีขึ้นมั้ย"
+**⚠️ ลิงก์ด้านล่างมาจาก build เก่า (ก่อน 809 rebuild)** — ค่า knob กลองจะไม่ตรงกับความหมายปัจจุบัน
+(`sdDecay` เคยเป็นวินาที ตอนนี้เป็น 0-1 · `sdSnappy` เคยเป็น unipolar ตอนนี้ bipolar tom↔snare)
+เก็บไว้เป็น**ตัวอย่าง pattern** ได้ แต่ **ห้ามใช้เทียบเสียง** — ต้องขอลิงก์ใหม่จากผู้ใช้ก่อนทุกครั้งที่จะ A/B
+
+**เวลาจะแก้เสียง ให้ขอลิงก์ปัจจุบันจากผู้ใช้ก่อนเสมอ** แล้ว decode ดูว่าเขาหมุนอะไรไว้ —
+ค่าที่ผู้ใช้ตั้งเองคือข้อมูลที่ดีที่สุดที่มี และเคยชี้บั๊กได้จริงมาแล้ว 2 ครั้ง
 
 ```
 #p=eyJ2Ijo0LCJ0IjoxMzAsInciOjAsImsiOnsidHVuZSI6MCwiY3V0b2ZmIjo1MjYuNzUyNzkzNDY5NDk0OSwicmVzbyI6MC42MTI4ODE5NzgzNTI4NjQ1LCJlbnZNb2QiOjAuMzE3Njg1MTA2MDY1NTM4MjQsImRlY2F5IjowLjQsImFjY2VudCI6MC41LCJkcml2ZSI6MC4zNSwic2RQaXRjaCI6MjMzLjg4MzM5MDYwNTczNTQzLCJzZERlY2F5IjowLjEyMDM4MzU1MTA0NTYxMDI0LCJzZFNuYXBweSI6MC45NDE2NjY2MzI3NTgyNDY2LCJjcFBpdGNoIjoxMzY1LjU5MjU4MjkyNTU0NTUsImNwRGVjYXkiOjAuMDg1MDgyMjA3ODcwNTA2OCwiY3BTcHJlYWQiOjAuMDF9LCJsIjoxNiwicyI6W1szNiwxLDEsMF0sWzM2LDIsMCwwXSxbNDgsMSwwLDBdLFszNiwwLDAsMF0sWzM2LDEsMCwwXSxbMzksMSwxLDFdLFszNiwxLDAsMF0sWzM2LDAsMCwwXSxbNDYsMSwwLDBdLFszNiwxLDEsMF0sWzM2LDIsMCwwXSxbNDMsMSwwLDBdLFszNiwxLDAsMF0sWzM2LDAsMCwwXSxbMzksMSwxLDBdLFszNiwxLDAsMF1dLCJkIjp7IkJEIjoiMTAwMDEwMDAxMDAwMTAwMCIsIlNEIjoiMDAwMDAwMDAwMDAwMDAwMCIsIkNIIjoiMDAxMDAwMTAwMDEwMDAxMCIsIk9IIjoiMDAwMDAwMDAwMDAwMDAwMCIsIkNQIjoiMDAwMDEwMDAwMDAwMTAwMSJ9LCJtIjp7InYzMDMiOjAuNTUsInZCRCI6MC42NSwidlNEIjowLjQyLCJ2Q0giOjAuMzIsInZPSCI6MC4zMiwidkNQIjowLjQsInZNYXMiOjAuOX19
@@ -386,9 +432,29 @@ knob ที่ต่างจากค่าเริ่มต้น: cutoff 527
 
 ---
 
-## 10) เริ่มเซสชันใหม่ยังไง
+## 10) โปรโตคอลของ session
 
-แนบ `rb303.html` + `HANDOFF.md` แล้วสั่งเช่น
-*"อ่าน HANDOFF.md แล้วทำข้อ 1-2 ในคิว §7"*
+### เปิด session
+1. อ่านไฟล์นี้ทั้งไฟล์ — โดยเฉพาะ **§6 (ตัวเลขที่วัดแล้ว)** · **§6.5 (ทางที่ไม่เวิร์ก)** · **§7 (ตัดสินไปแล้ว)**
+2. ถ้าผู้ใช้แนบ `.html` มา → ทำงานกับไฟล์นั้น อย่าเขียนใหม่จากศูนย์
+3. ถ้าจะแก้เสียง → **ขอลิงก์ปัจจุบันจากผู้ใช้ก่อน** แล้ว decode ดูค่าที่เขาตั้งเอง
 
-**ก่อนส่งงานทุกครั้ง: `bash test/run.sh`**
+### ปิด session
+1. `bash test/run.sh` ต้องขึ้น `=== ผ่านทั้งหมด ===`
+2. **อัปเดตไฟล์นี้**: ตัวเลขใหม่เข้า §6 · ทางที่ลองแล้วพังเข้า §6.5 · สิ่งที่ตัดสินเข้า §7
+3. บอกรายการไฟล์ที่ต้องอัป GitHub + ชื่อที่ต้องใช้ (ไฟล์ใหญ่ให้อัปเป็น `v2.html` ก่อนทับ `index.html`)
+
+### โครง repo
+```
+index.html          ← ตัวแอป (อัปเป็น v2.html ทดสอบก่อนทับ)
+HANDOFF.md          ← ไฟล์นี้
+README.md
+test/  run.sh · smoke.js · ui_test.js · test_dsp.js · hash_test.js · bank_test.js
+```
+
+### ของที่อยู่ใน Project knowledge
+- `HANDOFF.md` (ไฟล์นี้) — สถานะเทคนิค
+- `index.html` — โค้ดจริง
+- **Project instructions** — วิธีทำงาน กฎเหล็ก ข้อจำกัดของผู้ใช้
+
+live: **https://fckers00-cmd.github.io/RB303/**
