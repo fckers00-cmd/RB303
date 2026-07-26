@@ -41,8 +41,9 @@ function boot(store){
   global.FileReader=function(){};
   if(store) global.localStorage=store; else delete global.localStorage;
   const api=eval(sm+'\n;({seqSnapshot,sndSnapshot,applySeq,applySnd,snapshot,'+
-    'readBank,writeBank,renderSlots,state,BANK_KEY,SLOT_COUNT,KNOBDEF,'+
-    'setCtl:(c)=>{ctl=c;}, setStarted:(b)=>{started=b;}, setBooted:(b)=>{booted=b;}})');
+    'readBank,writeBank,renderSlots,tapSlot,state,BANK_KEY,SLOT_COUNT,KNOBDEF,'+
+    'setCtl:(c)=>{ctl=c;}, setStarted:(b)=>{started=b;}, setBooted:(b)=>{booted=b;},'+
+    'undoPending:()=>!!bankUndo, getSlotSel:()=>slotSel})');
   return {api,els};
 }
 
@@ -163,6 +164,42 @@ const ok=(name,cond,extra)=>{ console.log((cond?'OK   ':'FAIL ')+name+(cond?'':'
     ok('patch reaches engine whole (track '+track+')', missing.length===0,
        'ไม่ถูกส่ง: '+missing.join(','));
   }
+}
+
+// 9) auditioning the bank must not trip the undo gesture.
+//    Undo is a second tap on the SAME slot. A tap on a different slot is a new
+//    choice: it loads that slot. The old "second tap anywhere = undo" made every
+//    quick second pick roll back the first one instead of loading.
+{
+  /* two slots whose patterns cannot be confused for each other */
+  const mkSlot=(name,note)=>{
+    const {api}=boot(memStore());
+    api.setBooted(true);
+    api.state.pattern=api.state.pattern.map(()=>({note,t:1,accent:0,slide:0}));
+    return {n:name,seq:api.seqSnapshot(),snd:api.sndSnapshot()};
+  };
+  const A=mkSlot('A',40), B=mkSlot('B',52);
+  const raw=JSON.stringify([A,B,null,null,null,null,null,null]);
+
+  const firstNote=api=>api.state.pattern[0].note;
+
+  { const st=memStore(); st.setItem('rb303.bank.v1',raw);
+    const {api}=boot(st); api.setBooted(true); api.readBank();
+    api.tapSlot(0);
+    ok('tap slot A loads A', firstNote(api)===40, 'ได้ note '+firstNote(api));
+    api.tapSlot(1);
+    ok('tap slot B right after A loads B (ไม่ใช่ undo)',
+       firstNote(api)===52, 'ได้ note '+firstNote(api)+' — undo เด้งแทนที่จะโหลด');
+    ok('slot B is the selected slot', api.getSlotSel()===1, 'sel='+api.getSlotSel()); }
+
+  { const st=memStore(); st.setItem('rb303.bank.v1',raw);
+    const {api}=boot(st); api.setBooted(true); api.readBank();
+    const before=firstNote(api);
+    api.tapSlot(0);
+    api.tapSlot(0);
+    ok('tap the same slot twice still undoes', firstNote(api)===before,
+       'ได้ note '+firstNote(api)+' ควรได้ '+before);
+    ok('undo is spent after it runs', api.undoPending()===false); }
 }
 
 console.log(fails? '\n'+fails+' รายการไม่ผ่าน' : '\nbank: ผ่านทั้งหมด');
