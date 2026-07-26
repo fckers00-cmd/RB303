@@ -339,7 +339,7 @@
   จากนั้นกด <b>PITCH</b> ใส่โน้ต accent slide เฉพาะช่อง ● (ช่อง ○ ไม่มีพิตช์ของตัวเอง เหมือนเครื่องจริง) ·
   <b>กลอง</b>: แตะครั้งเดียว วนเป็น ปิด → เปิด → เปิด+accent · <b>CH ตัด OH อัตโนมัติ</b> (choke แบบ 808) ·
   <b>Accent</b> = ดัง+filter วืด · <b>Slide</b> = โน้ตผูก portamento ·
-  <b>Copy Link</b> = แชร์สถานะปัจจุบันเป็นลิงก์ · <b>Delay</b> = เอฟเฟกต์ใส่เฉพาะเสียง 303 · sync กับ tempo อัตโนมัติ · เริ่มต้น Mix=0 (ปิด) หมุนขึ้นเพื่อเปิด · <b>Bank</b> = 8 ช่องเก็บ pattern ในเครื่อง (แตะช่อง = โหลด, Save = เก็บทับ, แตะช่องเดิมซ้ำภายใน 5 วิ = undo) · <b>Export ไฟล์ JSON ไว้เป็นระยะ</b> เพราะ bank หายถ้าล้างข้อมูลเว็บ ·
+  <b>Copy Link</b> = แชร์สถานะปัจจุบันเป็นลิงก์ · <b>Delay</b> = เอฟเฟกต์ใส่เฉพาะเสียง 303 · sync กับ tempo อัตโนมัติ · เริ่มต้น Mix=0 (ปิด) หมุนขึ้นเพื่อเปิด · <b>Bank</b> = 8 ช่องเก็บ pattern ในเครื่อง (แตะช่อง = โหลด, Save = เก็บทับ, แตะช่องเดิมซ้ำภายใน 5 วิ = undo) · <b>bank ไม่ยุ่งกับ mixer</b> โหลด pattern แล้ว fader อยู่ที่เดิม · <b>Export ไฟล์ JSON ไว้เป็นระยะ</b> เพราะ bank หายถ้าล้างข้อมูลเว็บ ·
   Scope: เส้นบน = waveform, เส้นล่าง = spectrum (ดู resonance peak วิ่งตาม envelope ได้เลย)
 </div>
 
@@ -1245,6 +1245,21 @@ const slotsEl=document.getElementById('slots');
 const bankMsgEl=document.getElementById('bankMsg');
 function bankMsg(t,warn){ bankMsgEl.textContent=t||''; bankMsgEl.classList.toggle('warn',!!warn); }
 
+/* The mixer belongs to the instrument, not to a pattern. It used to ride along
+   inside a slot's `snd`, and that made the bank able to silence the whole box:
+   a slot saved while the faders happened to be down pulled all seven to zero on
+   load, and no pattern loaded afterwards brought the sound back, because the
+   mixer is global state. Worse, saveHash() then wrote the zeros into the URL, so
+   reopening the page stayed silent too.
+   Strip it going in as well as coming out — slots written by older builds carry
+   the zeros already, and stripping on read defuses those without asking anyone
+   to re-save. `snd` keeps the knobs: those really are part of the patch.
+   Copy Link still carries the mixer; sharing a track means sharing its balance. */
+function bankSnd(n){
+  if(!n || typeof n!=='object') return null;
+  const c=Object.assign({},n); delete c.m; return c;
+}
+
 function readBank(){
   try{
     const raw=localStorage.getItem(BANK_KEY);
@@ -1252,7 +1267,7 @@ function readBank(){
     const b=JSON.parse(raw);
     if(Array.isArray(b)) for(let i=0;i<SLOT_COUNT;i++){
       const x=b[i];
-      if(x && typeof x==='object' && x.seq) bank[i]={n:String(x.n||'').slice(0,24),seq:x.seq,snd:x.snd||null};
+      if(x && typeof x==='object' && x.seq) bank[i]={n:String(x.n||'').slice(0,24),seq:x.seq,snd:bankSnd(x.snd)};
     }
   }catch(e){ storageOK=false; }
 }
@@ -1305,7 +1320,7 @@ function tapSlot(i){
   cancelBankUndo();
   slotSel=i;
   if(!bank[i]){ renderSlots(); bankMsg('ช่อง '+(i+1)+' ว่าง — กด Save เพื่อเก็บสิ่งที่กำลังทำอยู่'); return; }
-  const before={seq:seqSnapshot(),snd:sndSnapshot()};
+  const before={seq:seqSnapshot(),snd:bankSnd(sndSnapshot())};
   applySnd(bank[i].snd);
   applySeq(bank[i].seq,false);
   refreshSteps(); refreshEditor(); saveHash();
@@ -1320,7 +1335,7 @@ document.getElementById('slotSave').onclick=()=>{
   const name=window.prompt('ตั้งชื่อ pattern ช่อง '+(slotSel+1)+':', cur?cur.n:'Pattern '+(slotSel+1));
   if(name===null) return;
   const before=cur?JSON.parse(JSON.stringify(cur)):null;
-  bank[slotSel]={ n:String(name).slice(0,24), seq:seqSnapshot(), snd:sndSnapshot() };
+  bank[slotSel]={ n:String(name).slice(0,24), seq:seqSnapshot(), snd:bankSnd(sndSnapshot()) };
   writeBank();
   armBankUndo('เก็บลงช่อง '+(slotSel+1)+' แล้ว',()=>{ bank[slotSel]=before; writeBank(); });
 };
@@ -1360,7 +1375,7 @@ bankFileEl.onchange=()=>{
       let n=0;
       for(let i=0;i<SLOT_COUNT;i++){
         const x=slots[i];
-        if(x && typeof x==='object' && x.seq){ bank[i]={n:String(x.n||'').slice(0,24),seq:x.seq,snd:x.snd||null}; n++; }
+        if(x && typeof x==='object' && x.seq){ bank[i]={n:String(x.n||'').slice(0,24),seq:x.seq,snd:bankSnd(x.snd)}; n++; }
         else bank[i]=null;
       }
       writeBank();
